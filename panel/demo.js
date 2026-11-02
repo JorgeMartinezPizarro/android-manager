@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'panel-demo-'));
-const keep = path.resolve(__dirname, '..', 'keep.txt');
+const keep = path.resolve(__dirname, '..', 'datos', 'keep.txt');
 if (fs.existsSync(keep)) fs.copyFileSync(keep, path.join(dir, 'keep.txt'));
 fs.writeFileSync(path.join(dir, 'devices.txt'), '192.168.1.51\n');
 fs.mkdirSync(path.join(dir, 'debloat'));

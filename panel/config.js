@@ -3,7 +3,22 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const DATA = process.env.PANEL_DATA || path.resolve(__dirname, '..');
+// Todo lo tuyo (móviles, apps, ajustes, canciones) va en datos/, que git no ve. Lo que las versiones anteriores dejaban
+// junto al proyecto se mueve ahí al arrancar
+const ROOT = path.resolve(__dirname, '..');
+const DATA = process.env.PANEL_DATA || path.join(ROOT, 'datos');
+const OWN = ['devices.txt', 'names.txt', 'apps.json', 'settings.json', 'music.json', 'keep.txt', 'keep.txt.bak', 'apks', 'musica', 'debloat'];
+fs.mkdirSync(DATA, { recursive: true });
+if (!process.env.PANEL_DATA) {
+  for (const name of OWN) {
+    const from = path.join(ROOT, name), to = path.join(DATA, name);
+    try {
+      if (fs.existsSync(from) && !fs.existsSync(to)) fs.renameSync(from, to);
+    } catch (e) {
+      console.error(`No he podido mover ${name} a datos/ (${e.code}): muévelo tú con el panel cerrado`);
+    }
+  }
+}
 const file = name => path.join(DATA, name);
 
 function readLines(name) {

@@ -1,7 +1,7 @@
-# Las canciones de la pestaña Música
-musica/
+# Todo lo tuyo: móviles, apps, ajustes y canciones. Lo escribe el panel y sin ello arranca vacío
+datos/
 
-# Datos de casa: los escribe el panel (o tú) y sin ellos arranca vacío
+# Donde lo guardaban las versiones anteriores, hasta que el panel lo mueve a datos/ al arrancar
 devices.txt
 names.txt
 music.json
@@ -10,6 +10,8 @@ apps.json
 keep.txt
 keep.txt.bak
 apks/
+musica/
+debloat/
 
 # Ajustes locales de Claude Code
 .claude/

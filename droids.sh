@@ -9,7 +9,7 @@
 #   ./droids.sh prune [--yes]     # quita las apps de terceros que no estén en keep.txt (sin --yes solo muestra)
 #   ./droids.sh debloat [--yes]   # quita apps del sistema listadas en debloat/<fabricante>.txt (sin --yes solo muestra)
 #
-# Ficheros junto al script:
+# Ficheros en datos/, los mismos que usa el panel:
 #   devices.txt         una IP por línea (192.168.1.50); líneas con # se ignoran
 #   keep.txt            paquetes de terceros que se conservan (uno por línea)
 #   debloat/huawei.txt  paquetes del sistema a quitar en Huawei (idem oppo.txt, motorola.txt...)
@@ -17,8 +17,9 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-DEVICES_FILE=devices.txt
-KEEP_FILE=keep.txt
+DATA=datos
+DEVICES_FILE=$DATA/devices.txt
+KEEP_FILE=$DATA/keep.txt
 PORT=5555
 
 clean() { grep -v '^\s*#' "$1" 2>/dev/null | sed 's/\s*#.*//; s/\s*$//' | grep -v '^$'; }
@@ -81,6 +82,8 @@ cmd_uninstall() {
 
 cmd_prune() {
   local apply=${1:-}
+  # Sin la lista se quitaría todo: mejor no hacer nada
+  [ -s "$KEEP_FILE" ] || { echo "Falta $KEEP_FILE con las apps que se conservan (si acabas de actualizar, arranca el panel una vez)"; exit 1; }
   for s in $(devices); do
     echo "== $(label "$s")"
     adb -s "$s" shell pm list packages -3 | tr -d '\r' | sed 's/^package://' | sort | while read -r pkg; do
@@ -99,7 +102,7 @@ cmd_debloat() {
   local apply=${1:-}
   for s in $(devices); do
     vendor=$(prop "$s" ro.product.manufacturer | tr '[:upper:]' '[:lower:]')
-    list="debloat/$vendor.txt"
+    list="$DATA/debloat/$vendor.txt"
     echo "== $(label "$s") -> $list"
     [ -f "$list" ] || { echo "   (no hay lista para $vendor)"; continue; }
     installed=$(adb -s "$s" shell pm list packages | tr -d '\r' | sed 's/^package://')
@@ -118,5 +121,5 @@ cmd_debloat() {
 
 case "${1:-}" in
   wifi|connect|list|install|uninstall|prune|debloat) c=$1; shift; "cmd_$c" "$@" ;;
-  *) sed -n '2,13p' "$0"; exit 1 ;;
+  *) sed -n '2,15p' "$0"; exit 1 ;;
 esac
