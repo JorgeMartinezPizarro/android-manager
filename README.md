@@ -66,44 +66,58 @@ Consejo: reserva en el router una IP fija para cada móvil.
     tú desde «Ver pantalla».
   - **Sus apps** (las tuyas y, si quieres, las del sistema) para abrirlas, desactivarlas, desinstalarlas o
     restaurar las del sistema que hayas quitado.
-- **Apps**: las *apps comunes*, las que quieres en todos los móviles, con su estado en cada uno
-  (✓ instalada, ↑ hay versión nueva, + falta, ! falló). Pulsa una celda para instalar solo en ese móvil,
-  o «Instalar lo pendiente» para todo. Cada app común viene de uno de estos sitios:
+- **Apps**: las *apps comunes*, con su estado en cada móvil (✓ instalada, ↑ hay versión nueva, + falta,
+  – ese móvil no la necesita, ! falló). Pulsa una celda para elegir: instalarla o ponerla al día en ese móvil, marcar que
+  no la necesita (ahí ni se instala ni se actualiza), quitarla de ese móvil (la desinstala y la marca) o volver a ponerla.
+  Las nuevas, y los móviles que lleguen nuevos, la llevan. «Instalar lo pendiente» instala todo lo que falta donde se
+  necesita. Cada app común viene de uno de estos sitios:
   - **APK propio**: lo subes tú, o lo copias de un móvil donde ya esté (solo apps de una pieza, como tus
     apps privadas). Se instala tal cual; si subes una versión nueva, se actualiza en todos.
   - **F-Droid**: el panel descarga la última versión, comprueba que es la app correcta, la instala y la
     actualiza cuando sale otra.
   - **Google Play**: Play no deja instalar desde fuera. El panel abre la ficha de la app en cada móvil
-    donde falte y allí pulsas «Instalar». Luego Play la mantiene al día.
+    donde falte, y su pantalla en el PC (con scrcpy, como «Ver pantalla»), para que pulses «Instalar» desde aquí. Luego
+    Play la mantiene al día.
 
   Con **«Instalar y actualizar solas»** activado, cada 5 minutos se ponen al día las de APK propio y
   F-Droid en los móviles conectados. Google Play nunca se abre solo.
   Debajo están las **otras apps** (instaladas pero no comunes): ★ la hace común, «Quitarlas todas»
   las desinstala. Y las listas de `datos/debloat/` para quitar apps del sistema.
 - **Música**: tus canciones sonando a la vez en los móviles que marques. Cada móvil hace de altavoz con una página
-  que el panel le abre en Chrome («Abrir altavoz» o «Abrir en todos»). No se manda «play» a cada uno, porque cada móvil
+  que el panel le abre en Chrome («Abrir» en su fila o «Abrir en todos»). No se manda «play» a cada uno, porque cada móvil
   tarda distinto en obedecer (de 0,2 a 3 s): todos ajustan su reloj con el del PC y el PC les dice a qué hora exacta
   empieza la canción. Mientras suena, cada uno mide cada pocos segundos cuánto se ha ido de donde debería estar y lo corrige
   solo, acelerando o frenando un poco (como mucho un 0,5 %, que no se nota en el tono); solo si se va más de 30 ms se recoloca
   de golpe. En el panel, junto a «Sonando», sale su **desfase** en ese momento.
   - Las canciones son las de la carpeta `datos/musica/` (y sus subcarpetas): súbelas desde el panel o cópialas ahí.
     Valen mp3, m4a, aac, ogg, opus, wav y flac. Al acabar una suena la siguiente, y tras la última, otra vez la primera.
+    Se eligen con **Canciones**, que las muestra a pantalla completa con un buscador (sin tildes ni mayúsculas; Enter
+    pone la primera que quede). Al elegir una se cierra sola. De los nombres se quita lo que añade la descarga de
+    YouTube: el código del vídeo («[p4QqMKe3rwY]») y coletillas como «(Official Music Video)» o «[4K]».
   - Cada altavoz tiene su **volumen** (el de la música del propio móvil, el mismo que cambian sus botones; el panel lo
-    lee cada pocos segundos y lo muestra de 0 a 100 % en todos, aunque cada móvil tenga sus pasos), un botón para **silenciarlo** o devolverle la voz de un clic y otro, **Solo**, para que
-    suene únicamente ese. «Que suenen todos» les quita el silencio a todos.
+    lee cada pocos segundos y lo muestra de 0 a 100 % en todos, aunque cada móvil tenga sus pasos). El altavoz a su
+    izquierda lo **silencia** o le devuelve la voz de un clic, y **Solo** hace que suene únicamente ese. «Que suenen
+    todos» les quita el silencio a todos. La lupa es «Ver pantalla», y la flecha circular, «Reabrir».
   - Pulsando en la barra de la canción se salta a ese punto. **Aleatorio** sigue con una canción cualquiera en vez de
     con la siguiente, y el **temporizador** pausa la música al cabo de 15 minutos a 2 horas.
   - **Prueba de sincronía**: un pitido por segundo. Si un móvil se oye antes que los demás, súbele el **retraso**;
     si se oye después, bájalo. Va de milisegundo en milisegundo con − y +, o escribe el número. Un altavoz Bluetooth suele
     ir un poco por detrás: ese móvil, con retraso negativo.
-  - La página del altavoz ocupa toda la pantalla de cada móvil y hace de mando: desde cualquiera se puede pausar todos,
-    pasar de canción, elegir otra o decir que suene ahí. La pantalla se queda encendida mientras la página está delante
-    (si se apaga, Android puede dormir Chrome). Déjalos enchufados. Si nadie la toca en 3 minutos descansa: el panel baja el brillo
-    del móvil al mínimo, la página se atenúa y cada minuto se mueve unos píxeles, para que no se quede grabada en las pantallas
-    OLED (como la del Nexus 6). Al tocarla vuelve el brillo que tenía (también el automático). El toque que la despierta no
-    pulsa nada: el botón que hubiera debajo se pulsa con el siguiente.
+  - La página del altavoz ocupa toda la pantalla de cada móvil y hace de mando: arriba la canción (en una línea: si no
+    cabe, se desliza despacio para enseñarla entera; con el artista debajo y por dónde va) y los botones de anterior, pausa y siguiente, que valen para todos los altavoces; abajo,
+    **Elegir canción** y el volumen de ese móvil: **Bajar**, **Silenciar** (en ámbar mientras está silenciado; con otro
+    toque vuelve a sonar) y **Subir**. El volumen lo cambia el PC por adb, porque una página no puede: es el mismo que
+    el de los botones del móvil y el de la barra del panel. Elegir canción abre la lista a pantalla completa, con letra
+    grande y buscador; se cierra al elegir una, con la X o con el botón de volver del móvil. La pantalla se queda encendida mientras la página está delante
+    (si se apaga, Android puede dormir Chrome). Déjalos enchufados. Si nadie la toca en 3 minutos descansa: la página se queda
+    en negro y el panel baja el brillo del móvil al mínimo. En las pantallas OLED (como la del Nexus 6) el negro apaga los
+    píxeles, así que no se ve nada ni se queda grabada la imagen. Los móviles que en manual no bajan del todo (el Nexus 6 se
+    queda en 17 de 255) se dejan en automático con el ajuste al mínimo, que a oscuras sí llega a 1. Vuelve al tocar la
+    pantalla o arrastrar el dedo por ella, con el brillo que tenía (también el automático). El toque que la despierta no pulsa
+    nada: el botón que hubiera debajo se pulsa con el siguiente.
   - Chrome no deja sonar una página hasta que alguien la toca: el panel la toca solo. Si el móvil tiene PIN o patrón,
-    desbloquéalo cuando lo abras y el panel la tocará en cuanto pueda.
+    desbloquéalo cuando lo abras y el panel la tocará en cuanto pueda. La lupa («Ver pantalla»), en la fila de cada
+    altavoz, abre su pantalla en el PC para desbloquearlo o tocarla desde aquí.
   - Cuando el panel trae una versión nueva de la página, las que están abiertas se recargan solas. «Reabrir» la vuelve a
     cargar en ese móvil, por si algo va raro.
   - El PC tiene que estar encendido con el panel en marcha: la música sale de él.
@@ -144,5 +158,5 @@ cualquiera en tu wifi podría gestionar los móviles: todavía no tiene contrase
 
 Los altavoces llegan al PC por la propia conexión de adb (`adb reverse`), al puerto 8767, que tampoco escucha en la wifi.
 Los de Android 7 no pueden: para ellos el puerto 8767 escucha también en la IP del PC en la wifi, y solo atiende a las IP
-de esos móviles. Por ahí solo se puede poner, pausar o pasar canciones y descargarlas; cualquier app de esos móviles
-podría hacerlo.
+de esos móviles. Por ahí solo se puede poner, pausar o pasar canciones, descargarlas y subir o bajar el volumen de los
+altavoces; cualquier app de esos móviles podría hacerlo.

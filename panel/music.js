@@ -43,7 +43,11 @@ function songs() {
     .map(id => ({ id, name: nameOf(id) }));
 }
 
-const nameOf = id => (id === TEST ? 'Prueba de sincronía (pitidos)' : id.replace(/\.[^./]+$/, '').replace(/\//g, ' · '));
+// El nombre sin lo que añade la descarga de YouTube: el código del vídeo ([p4QqMKe3rwY]), la extensión del vídeo original y
+// coletillas como «(Official Music Video)» o «[4K]». Lo que distingue versiones, como «(Live 1977)», se queda
+const JUNK = /\s*[([](?:\s*(?:official|oficial|music|lyrics?|video|audio|hd|hq|4k|upgrade|vinyl|visualizer|animated|high|quality|remastered|with)\b)+\s*[)\]]/gi;
+const nameOf = id => (id === TEST ? 'Prueba de sincronía (pitidos)' : id.replace(/\.[^./]+$/, '').replace(/\s*\[[\w-]{11}\]$/, '')
+  .replace(/\.(avi|mp4|mkv|webm|flv)$/i, '').replace(JUNK, '').trim().replace(/\//g, ' · '));
 
 // WAV mono de 16 bits con la onda que dé sample(t), entre -1 y 1
 function wav(seconds, sample, rate = 22050) {
@@ -114,7 +118,8 @@ const position = () => (st.playing && st.startAt != null ? Math.max(0, (now() - 
 function view(id, list = songs(), v = pageVersion()) {
   const room = rooms[id] || {};
   return {
-    song: st.song, title: st.song && nameOf(st.song), playing: st.playing, startAt: st.startAt, position: st.position,
+    song: st.song, title: st.song && nameOf(st.song), duration: (st.song && durations.get(st.song)) || null,
+    playing: st.playing, startAt: st.startAt, position: st.position,
     stopAt: st.stopAt, on: Boolean(room.on), delay: room.delay || 0, room: cfg.names().get(id) || '',
     songs: list.map(s => [s.id, s.name]), v,
   };
@@ -271,6 +276,19 @@ function setRoom(id, { on, delay, serial } = {}) {
   maybeStart();
 }
 
+// El volumen de la música de un altavoz, desde su propia página: step es un paso más (1) o menos (-1), y 0 solo lo lee.
+// Los toques seguidos van en fila, para que cada paso parta del anterior
+function stepVolume(id, step) {
+  const room = rooms[id];
+  if (!ID.test(id || '') || !room?.serial) throw new Error('Este móvil no está en el panel');
+  const sp = speaker(id);
+  sp.volumeQueue = (sp.volumeQueue || Promise.resolve()).catch(() => {}).then(async () => {
+    const now = await adb.musicVolume(room.serial);
+    return step ? adb.setMusicVolume(room.serial, now.level + step) : now;
+  });
+  return sp.volumeQueue;
+}
+
 // Abre la página de altavoz en el móvil. Cuando diga que espera un toque (Chrome no deja sonar sin él), se lo da el panel;
 // si el móvil está bloqueado con PIN, lo vuelve a intentar con cada aviso de la página durante 2 minutos
 // again: recargarla aunque ya esté abierta y sonando
@@ -380,7 +398,6 @@ function report(id, s) {
 
 // Mientras la página descansa, el brillo del móvil al mínimo; al tocarla, como estaba. Lo que había se guarda en music.json
 // (room.light) por si el panel se cierra con la pantalla baja. Si cambia de idea a medias, el bucle lo deja como pida al final
-const DIM = { mode: '0', level: '1' };
 async function light(id) {
   const sp = speaker(id), room = rooms[id];
   if (!room?.serial || sp.lighting) return;
@@ -390,7 +407,7 @@ async function light(id) {
       if (sp.rest) {
         room.light = await adb.brightness(room.serial);
         saveRooms();
-        await adb.setBrightness(room.serial, DIM);
+        await adb.setBrightness(room.serial, await adb.darkest(room.serial, room.light));
       } else {
         await adb.setBrightness(room.serial, room.light);
         delete room.light;
@@ -538,6 +555,7 @@ async function handle(req, res) {
       const body = await readJson(req);
       if (url.pathname === '/status') return (report(body.id, body), json(res, {}));
       if (url.pathname === '/control') return json(res, { warning: control(String(body.action), body) });
+      if (url.pathname === '/volume') return json(res, await stepVolume(String(body.id), Math.sign(Number(body.step)) || 0));
     }
     reply(res, 404, 'text/plain', 'No existe');
   } catch (e) {

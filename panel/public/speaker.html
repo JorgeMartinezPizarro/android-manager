@@ -7,38 +7,90 @@
   <title>Altavoz</title>
   <style>
     /* Fondo negro: en las pantallas OLED apenas gasta, y de noche casi no alumbra la habitación */
-    :root { --text: #e8ebf0; --muted: #8d97a6; --accent: #3ddc84; --line: #232a33; --warn: #f3b44a; color-scheme: dark; }
+    :root { --text: #eef1f5; --muted: #8d97a6; --accent: #3ddc84; --on-accent: #06301b; --line: #232a33; --surface: #0f141a;
+      --raised: #171d25; --warn: #f3b44a; color-scheme: dark; }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     html, body { height: 100%; }
     body { margin: 0; background: #000; color: var(--text); font: 17px/1.45 system-ui, Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
-    header { display: flex; justify-content: space-between; gap: 12px; padding: 14px 18px; color: var(--muted); font-size: 15px; }
-    header strong { color: var(--text); font-weight: 600; }
-    main { padding: 4vh 18px 24px; max-width: 640px; margin: 0 auto; text-align: center; transition: opacity .6s; }
-    #state { margin: 0; color: var(--muted); }
-    #state.warn { color: var(--warn); }
-    h1 { margin: 6px 0 4vh; font-size: clamp(24px, 7vw, 38px); line-height: 1.2; overflow-wrap: anywhere; }
-    .controls { display: flex; justify-content: center; align-items: center; gap: 22px; }
-    .controls button { display: grid; place-items: center; width: 64px; height: 64px; border: 0; border-radius: 50%; background: #161b22; color: var(--text); cursor: pointer; }
-    .controls button.main { width: 88px; height: 88px; background: var(--accent); color: #06301b; }
-    .controls svg { width: 30px; height: 30px; fill: currentColor; }
-    .controls .main svg { width: 38px; height: 38px; }
-    .note { margin: 3vh 0 0; color: var(--muted); font-size: 14px; }
-    .here { display: inline-flex; align-items: center; gap: 10px; margin: 2vh 0 0; padding: 10px 18px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--text); font: inherit; cursor: pointer; }
-    .here i { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
-    .here.on i { background: var(--accent); }
-    ol { margin: 4vh 0 0; padding: 0; list-style: none; text-align: left; border-top: 1px solid var(--line); }
-    li button { display: block; width: 100%; padding: 14px 6px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
-    li button.now { color: var(--accent); font-weight: 600; }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    svg { fill: currentColor; }
+
+    /* Arriba el nombre del altavoz; en medio el reproductor; abajo, a mano, elegir canción y si suena aquí */
+    .app { display: flex; flex-direction: column; min-height: 100%; max-width: 560px; margin: 0 auto; padding: 0 20px; }
+    header { padding: 18px 2px 0; color: var(--muted); font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+    main { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 2vh 0; text-align: center; }
+
+    .chip { display: inline-flex; align-items: center; gap: 8px; align-self: center; margin: 0; padding: 6px 14px; border-radius: 999px;
+      background: var(--raised); color: var(--muted); font-size: 15px; }
+    .chip.playing { color: var(--accent); background: rgb(61 220 132 / .1); }
+    .chip.warn { color: var(--warn); background: rgb(243 180 74 / .12); }
+    /* Tres barritas que bailan mientras suena aquí */
+    .eq { display: none; align-items: flex-end; gap: 2px; height: 13px; }
+    .chip.playing .eq { display: inline-flex; }
+    .eq b { width: 3px; height: 100%; border-radius: 1px; background: currentColor; transform-origin: bottom; animation: eq 1.1s ease-in-out infinite; }
+    .eq b:nth-child(2) { animation-delay: -.45s; }
+    .eq b:nth-child(3) { animation-delay: -.8s; }
+    @keyframes eq { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+    body.rest .eq b { animation: none; }
+
+    /* El título en una sola línea. Si no cabe, se desliza hasta el final, espera y vuelve (lo mueve speaker.js), con los
+       bordes difuminados */
+    h1 { margin: 18px 0 0; padding: 0 12px; overflow: hidden; white-space: nowrap; font-size: clamp(28px, 8.5vw, 42px); line-height: 1.2; letter-spacing: -.01em; }
+    #title-text { display: inline-block; }
+    h1.slide { text-align: left; -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent); }
+    #artist { margin: 8px 0 0; overflow: hidden; color: var(--muted); font-size: 19px; white-space: nowrap; text-overflow: ellipsis; }
+    .bar { height: 6px; margin: 24px 0 0; border-radius: 3px; background: var(--raised); overflow: hidden; }
+    #bar { display: block; width: 0; height: 100%; border-radius: 3px; background: var(--accent); transition: width 1s linear; }
+    .times { display: flex; justify-content: space-between; min-height: 1.5em; margin-top: 8px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+
+    .controls { display: flex; justify-content: center; align-items: center; gap: 26px; margin-top: 14px; }
+    .controls button { display: grid; place-items: center; width: 64px; height: 64px; padding: 0; border: 0; border-radius: 50%; background: var(--raised); }
+    .controls button.main { width: 88px; height: 88px; background: var(--accent); color: var(--on-accent);
+      box-shadow: 0 0 0 8px rgb(61 220 132 / .12), 0 10px 34px rgb(61 220 132 / .22); }
+    .controls svg { width: 30px; height: 30px; }
+    .controls .main svg { width: 42px; height: 42px; }
+    .controls button:active, .tile:active { transform: scale(.95); }
+
+    /* Abajo, a mano: elegir canción y el volumen de este móvil. Todas las baldosas iguales: el icono en un círculo y lo que
+       hacen. La del medio, algo más ancha para que quepa «Silenciado» */
+    .actions { display: grid; grid-template-columns: 1fr 1.35fr 1fr; gap: 10px; padding: 6px 0 max(18px, env(safe-area-inset-bottom)); }
+    .tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-width: 0; padding: 12px 6px;
+      border: 1.5px solid #2b333e; border-radius: 24px; background: #131920; transition: border-color .2s, background .2s; }
+    .tile i { display: grid; place-items: center; flex: none; width: 50px; height: 50px; border-radius: 50%; background: rgb(61 220 132 / .14); color: var(--accent); }
+    .tile svg { width: 28px; height: 28px; }
+    .tile strong { font-size: 17px; line-height: 1.2; }
+    .tile small { color: var(--muted); font-size: 13px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+    .tile.wide { grid-column: 1 / -1; flex-direction: row; gap: 14px; }
+    .tile.wide strong { font-size: 19px; }
+    #here.off { border-color: rgb(243 180 74 / .45); background: rgb(243 180 74 / .07); }
+    #here.off i { background: rgb(243 180 74 / .16); color: var(--warn); }
+    #here.off strong { color: var(--warn); }
+
+    /* Las canciones, a pantalla completa encima del reproductor; solo se desplaza la lista */
+    #picker { position: fixed; inset: 0; z-index: 1; background: #000; }
+    .sheet { display: flex; flex-direction: column; height: 100%; max-width: 680px; margin: 0 auto; }
+    .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 12px 8px 20px; }
+    .sheet-head strong { font-size: 24px; }
+    #picker-close { display: grid; place-items: center; flex: none; width: 60px; height: 60px; padding: 0; border: 0; border-radius: 50%; background: var(--raised); }
+    #picker-close svg { width: 32px; height: 32px; }
+    #find { margin: 0 20px 10px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--text); font: inherit; }
+    #songs { flex: 1; margin: 0; padding: 0 20px 30px; overflow-y: auto; list-style: none; border-top: 1px solid var(--line); }
+    #songs button { display: block; width: 100%; min-height: 60px; padding: 14px 6px; border: 0; border-bottom: 1px solid var(--line); background: none; font-size: 19px; text-align: left; }
+    #songs button.now { color: var(--accent); font-weight: 600; }
+    #songs button.now::before { content: "▶\00a0\00a0"; }
     .empty { padding: 16px 6px; color: var(--muted); }
-    #activate { position: fixed; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-      width: 100%; padding: 24px; border: 0; background: #000; color: var(--text); font: inherit; text-align: center; cursor: pointer; }
-    #activate svg { width: 96px; height: 96px; fill: var(--accent); }
+
+    #activate { position: fixed; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+      width: 100%; padding: 24px; border: 0; background: #000; text-align: center; }
+    #activate svg { width: 96px; height: 96px; color: var(--accent); }
     #activate strong { font-size: 24px; }
     #activate span { max-width: 320px; color: var(--muted); }
-    /* Descanso: una capa negra casi opaca encima de todo (menos de «Toca para activar»); se va con un toque y tarda en volver */
-    #rest { position: fixed; inset: 0; z-index: 1; background: #000; opacity: 0; pointer-events: none; transition: opacity .3s; }
-    body.rest #rest { opacity: .8; pointer-events: auto; transition-duration: 3s; }
+    /* Descanso: una capa negra encima de todo (menos de «Toca para activar»); se va con un toque y tarda en volver. Al irse
+       sigue recogiendo toques un segundo más, para que el dedo que la ha quitado no pulse lo que hay debajo al soltarse */
+    #rest { position: fixed; inset: 0; z-index: 2; background: #000; opacity: 0; visibility: hidden; touch-action: none;
+      transition: opacity .3s, visibility 0s 1s; }
+    body.rest #rest { opacity: 1; visibility: visible; transition: opacity 3s; }
   </style>
 </head>
 <body>
@@ -48,19 +100,47 @@
     <span>Chrome necesita un toque antes de dejar sonar la música. Lo normal es que el panel lo dé solo.</span>
   </button>
   <div id="rest"></div>
-  <header><strong id="room">Altavoz</strong><span id="link"></span></header>
-  <main>
-    <p id="state">Conectando con el PC…</p>
-    <h1 id="title">Nada sonando</h1>
-    <div class="controls">
-      <button data-do="previous" aria-label="Anterior"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
-      <button data-do="toggle" class="main" id="toggle" aria-label="Reproducir"><svg viewBox="0 0 24 24"><path id="toggle-icon" d="M8 5v14l11-7z"/></svg></button>
-      <button data-do="next" aria-label="Siguiente"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+  <div id="picker" hidden role="dialog" aria-modal="true" aria-labelledby="picker-title">
+    <div class="sheet">
+      <div class="sheet-head">
+        <strong id="picker-title">Elige una canción</strong>
+        <button id="picker-close" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+      </div>
+      <input type="search" id="find" placeholder="Buscar canción o artista" aria-label="Buscar canción" autocomplete="off" enterkeyhint="search">
+      <ol id="songs"></ol>
     </div>
-    <p class="note">La pausa y las canciones que elijas aquí valen para todos los altavoces.</p>
-    <button class="here" id="here"><i></i><span id="here-text">Suena aquí</span></button>
-    <ol id="songs"></ol>
-  </main>
+  </div>
+  <div class="app">
+    <header id="room">Altavoz</header>
+    <main>
+      <p class="chip" id="state"><span class="eq"><b></b><b></b><b></b></span><span id="state-text">Conectando con el PC…</span></p>
+      <h1 id="title"><span id="title-text">Nada sonando</span></h1>
+      <p id="artist" hidden></p>
+      <div class="bar"><i id="bar"></i></div>
+      <div class="times"><span id="pos"></span><span id="dur"></span></div>
+      <div class="controls">
+        <button data-do="previous" aria-label="Anterior"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
+        <button data-do="toggle" class="main" id="toggle" aria-label="Reproducir"><svg viewBox="0 0 24 24"><path id="toggle-icon" d="M8 5v14l11-7z"/></svg></button>
+        <button data-do="next" aria-label="Siguiente"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+      </div>
+    </main>
+    <nav class="actions">
+      <button class="tile wide" id="pick">
+        <i><svg viewBox="0 0 24 24"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18A3 3 0 1 0 19 17V8h3V6h-5z"/></svg></i>
+        <strong>Elegir canción</strong>
+      </button>
+      <button class="tile" data-volume="-1" aria-label="Bajar el volumen">
+        <i><svg viewBox="0 0 24 24"><path d="M5 10.5h14v3H5z"/></svg></i><strong>Bajar</strong>
+      </button>
+      <button class="tile" id="here">
+        <i><svg viewBox="0 0 24 24"><path id="here-icon" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/></svg></i>
+        <strong id="here-text">Silenciar</strong><small id="here-hint">Volumen …</small>
+      </button>
+      <button class="tile" data-volume="1" aria-label="Subir el volumen">
+        <i><svg viewBox="0 0 24 24"><path d="M10.5 5h3v5.5H19v3h-5.5V19h-3v-5.5H5v-3h5.5z"/></svg></i><strong>Subir</strong>
+      </button>
+    </nav>
+  </div>
   <script src="speaker.js"></script>
 </body>
 </html>

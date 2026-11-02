@@ -21,7 +21,7 @@ const factorySettings = (tweak = {}) => ({
 const settingsOf = p => (p.settings ||= factorySettings()); // estados guardados antes de que hubiera ajustes
 
 const phone = (sn, maker, model, android, battery, ip, mine, tweak) => ({
-  sn, maker, model, android, battery, ip,
+  sn, maker, model, android, battery, ip, lowest: tweak?.lowest,
   apps: Object.fromEntries([...SYSTEM.map(p => [p, { system: true }]), ...mine.map(p => [p, {}])]),
   settings: factorySettings(tweak),
 });
@@ -32,7 +32,7 @@ const initial = () => ({
     R58M30ABCDE: phone('R58M30ABCDE', 'samsung', 'SM-A505FN', '9', 87, '192.168.1.50',
       ['at.bitfire.davdroid', 'com.whatsapp', 'com.zhiliaoapp.musically', 'im.vector.app'], { system: { screen_off_timeout: '600000' } }),
     ZY22B4K7QP: phone('ZY22B4K7QP', 'motorola', 'moto g(8)', '10', 18, '192.168.1.51', ['im.vector.app', 'org.videolan.vlc'],
-      { system: { screen_off_timeout: '60000', accelerometer_rotation: '0' } }),
+      { system: { screen_off_timeout: '60000', accelerometer_rotation: '0', screen_auto_brightness_adj: '0.0' }, lowest: 17 }),
     '8AFX1JK2': phone('8AFX1JK2', 'Xiaomi', 'Redmi Note 9', '12', 100, '192.168.1.52', [], { system: { font_scale: '1.15' } }),
     // Aún sin conectar: para probar el alta por QR, añade a «mdns» [nombre del QR, '_adb-tls-pairing._tcp', '192.168.1.53:41235', clave]
     '0B281JEC': phone('0B281JEC', 'Google', 'Pixel 4a', '13', 64, '192.168.1.53', ['im.vector.app'], { night: 'yes' }),
@@ -192,6 +192,11 @@ function shell(p, c) {
   }
   if ((m = c.match(/^settings list (system|global)$/))) {
     return Object.entries(settingsOf(p)[m[1]]).sort().forEach(([k, v]) => out(`${k}=${v}`));
+  }
+  // Brillo mínimo: en manual no baja de lowest (17 en el Nexus 6); en automático, hasta 1
+  if ((m = c.match(/^dumpsys (power|display) \| grep -m1 (\w+)$/))) {
+    const line = { power: `mScreenBrightnessSettingMinimum=${p.lowest ?? 1}`, display: 'mScreenBrightnessRangeMinimum=1' }[m[1]];
+    return line.includes(m[2]) ? out(`  ${line}`) : undefined;
   }
   if ((m = c.match(/^settings get (system|global) (\S+)$/))) return out(settingsOf(p)[m[1]][m[2]] ?? 'null');
   if ((m = c.match(/^settings put (system|global) (\S+) (\S+)$/))) return void (settingsOf(p)[m[1]][m[2]] = m[3]);

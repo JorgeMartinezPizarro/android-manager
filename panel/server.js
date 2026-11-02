@@ -298,7 +298,7 @@ on('GET', '/api/overview', async () => {
   await Promise.all(devices.map(async d => {
     const vendor = (d.maker || '').toLowerCase();
     d.third = [];
-    d.debloat = { file: `debloat/${vendor}.txt`, exists: Object.hasOwn(lists, vendor), pkgs: [] };
+    d.debloat = { file: `datos/debloat/${vendor}.txt`, exists: Object.hasOwn(lists, vendor), pkgs: [] };
     try {
       const apps = await adb.apps(d.serial);
       const installed = new Set(apps.filter(a => a.installed).map(a => a.pkg));

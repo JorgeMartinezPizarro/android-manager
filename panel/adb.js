@@ -218,14 +218,25 @@ async function writeSettings(serial, commands) {
 }
 
 // Brillo de la pantalla, para bajarlo al mínimo mientras la página de altavoz descansa (una web no puede). Con el brillo
-// automático (mode 1) Android no hace caso del nivel: para bajarlo hay que pasar a manual (0) y luego volver
+// automático (mode 1) Android no hace caso del nivel: para bajarlo hay que pasar a manual (0) y luego volver. También se
+// guarda el ajuste del automático (adj, de -1 a 1), que algunos móviles usan para oscurecerse (darkest)
 async function brightness(serial) {
-  const [mode, level] = (await shell(serial, 'settings get system screen_brightness_mode; settings get system screen_brightness')).trim().split(/\s+/);
-  return { mode: /^[01]$/.test(mode) ? mode : '1', level: /^\d+$/.test(level) ? level : '128' };
+  const [mode, level, adj] = (await shell(serial, 'settings get system screen_brightness_mode; settings get system screen_brightness; '
+    + 'settings get system screen_auto_brightness_adj')).trim().split(/\s+/);
+  return { mode: /^[01]$/.test(mode) ? mode : '1', level: /^\d+$/.test(level) ? level : '128', ...(/^-?[\d.]+$/.test(adj) && { adj }) };
 }
 
-const setBrightness = (serial, { mode, level }) => writeSettings(serial, [
-  `settings put system screen_brightness ${level}`, `settings put system screen_brightness_mode ${mode}`]);
+// Lo más oscuro que deja cada móvil: casi siempre el nivel 1 en manual. Algunos (el Nexus 6) no bajan en manual de un mínimo,
+// 17 de 255, pero en automático sí llegan al de la pantalla: con el ajuste a -1 y la habitación a oscuras, se quedan en 1.
+// Solo si ya estaba en automático: al pasar de manual a automático el Nexus enciende un segundo su último brillo automático
+async function darkest(serial, now) {
+  const out = await shell(serial, 'dumpsys power | grep -m1 mScreenBrightnessSettingMinimum; dumpsys display | grep -m1 mScreenBrightnessRangeMinimum');
+  const manual = Number(out.match(/SettingMinimum=(\d+)/)?.[1]), screen = Number(out.match(/RangeMinimum=(\d+)/)?.[1]);
+  return now.mode === '1' && now.adj && screen < manual ? { mode: '1', level: '1', adj: '-1' } : { mode: '0', level: '1' };
+}
+
+const setBrightness = (serial, { mode, level, adj }) => writeSettings(serial, [`settings put system screen_brightness ${level}`,
+  ...(adj ? [`settings put system screen_auto_brightness_adj ${adj}`] : []), `settings put system screen_brightness_mode ${mode}`]);
 
 // ── Acciones rápidas ──
 
@@ -502,5 +513,5 @@ async function enableWifi(serial) {
 
 module.exports = {
   PKG, adbPath, startServer, serials, devices, apps, appAction, versions, install, openStore, pullApk,
-  readSettings, writeSettings, brightness, setBrightness, quick, musicVolume, setMusicVolume, screenshot, reverse, wifiIp, openSpeaker, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
+  readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, reverse, wifiIp, openSpeaker, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
 };

@@ -47,7 +47,6 @@ async function busy(btn, fn) {
   }
 }
 
-// Diálogo de confirmación; devuelve true si se acepta
 // Como ask, pero con varias salidas: buttons es [[valor, texto, clase]]; devuelve el valor elegido o '' si se cancela
 function choose(title, html, buttons) {
   const dlg = $('#dialog');
@@ -62,6 +61,7 @@ function choose(title, html, buttons) {
   return new Promise(resolve => dlg.addEventListener('close', () => resolve(dlg.returnValue), { once: true }));
 }
 
+// Diálogo de confirmación; devuelve true si se acepta
 function ask(title, html, okLabel = 'Aceptar', kind = 'danger') {
   const dlg = $('#dialog');
   dlg.className = '';
@@ -567,7 +567,7 @@ function othersHtml({ devices, keep }) {
     </table></div>` : ''}
     <h2>Apps del sistema que sobran</h2>
     <div class="card">
-      <p class="muted">Para quitar en bloque apps del sistema (bloatware), crea <code>debloat/&lt;fabricante&gt;.txt</code> en la carpeta del proyecto
+      <p class="muted">Para quitar en bloque apps del sistema (bloatware), crea <code>datos/debloat/&lt;fabricante&gt;.txt</code> en la carpeta del proyecto
         con un paquete por línea. Se quitan solo para el usuario y se recuperan con «Restaurar» en la ficha del móvil.</p>
       <ul class="debloat">${debloat}</ul>
     </div>`;
@@ -731,8 +731,19 @@ function addAppDialog({ pkg = '', serial = null } = {}) {
 const isReady = d => d.state === 'device' && !d.error;
 const mmss = s => (s == null ? '' : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`);
 const mb = (action, label, tip, cls = '') => `<button class="btn ${cls}" data-act="music" data-action="${action}" title="${esc(tip)}">${label}</button>`;
+// Iconos de trazo, como el de actualizar de la cabecera
+const icon = (paths, size = 16) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+const ICON = {
+  sound: icon('<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>'),
+  muted: icon('<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 6 6m0-6-6 6"/>'),
+  look: icon('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'),
+  reload: icon('<path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/>'),
+  songs: icon('<path d="M3 6h12M3 11h12M3 16h7"/><path d="M19 17V5l3 1"/><circle cx="16.5" cy="17" r="2.5"/>', 18),
+  close: icon('<path d="M6 6l12 12M18 6 6 18"/>', 20),
+};
 const SPEAKER_STATE = {
-  tap: ['Esperando un toque', 'diff', 'Chrome necesita que alguien toque la pantalla del móvil antes de dejar sonar la música. El panel lo hace solo al abrirlo; si no, tócala tú o pulsa «Ver pantalla» y hazlo desde el PC'],
+  tap: ['Esperando un toque', 'diff', 'Chrome necesita que alguien toque la pantalla del móvil antes de dejar sonar la música. El panel lo hace solo al abrirlo; si no, tócala tú o pulsa la lupa («Ver pantalla») y hazlo desde el PC'],
   idle: ['Listo', 'ok', ''],
   ready: ['Listo', 'ok', ''],
   loading: ['Cargando…', '', 'Está descargando la canción del PC'],
@@ -742,7 +753,18 @@ const SPEAKER_STATE = {
 async function viewMusic(current) {
   view.innerHTML = `<div class="page-head"><h1>Música</h1>
       <p class="muted">Tus canciones sonando a la vez en los móviles que elijas. Cada móvil hace de altavoz con una página que abre en Chrome.</p></div>
-    <section id="music">${loading('Buscando móviles…')}</section>`;
+    <section id="music">${loading('Buscando móviles…')}</section>
+    <dialog id="songs-dlg" class="full" aria-labelledby="songs-title">
+      <div class="full-head">
+        <h2 id="songs-title">Canciones <span class="muted small" id="songs-count"></span></h2>
+        <input type="search" id="song-filter" placeholder="Buscar canción o artista" aria-label="Buscar canción" autocomplete="off">
+        <label class="btn">Subir canciones<input type="file" id="song-files" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac" multiple hidden></label>
+        <button class="btn" data-act="music-folder" title="Abre en el PC la carpeta de la música: lo que copies ahí aparece aquí">Abrir la carpeta</button>
+        <button class="btn ghost icon" data-act="songs-close" title="Cerrar (Esc)" aria-label="Cerrar">${ICON.close}</button>
+      </div>
+      <ul class="song-list" id="songs"></ul>
+      <p class="empty muted" id="songs-none" hidden></p>
+    </dialog>`;
   state.reload = async () => {
     const [{ devices }, music] = await Promise.all([api('/devices'), api('/music')]);
     if (!current()) return;
@@ -761,10 +783,13 @@ function renderMusic() {
       <div class="now-head">
         <div class="now-title"><span class="muted small" id="now-state"></span><strong id="now-song"></strong></div>
         <div class="now-controls">
-          ${mb('previous', '⏮', 'Anterior; si ya lleva unos segundos, vuelve al principio')}
-          <button class="btn primary" id="now-toggle" data-act="music" data-action="toggle"></button>
-          ${mb('next', '⏭', 'Siguiente')}
-          ${mb('stop', 'Parar', 'Para la música en todos los altavoces', 'ghost')}
+          <button class="btn" data-act="songs" title="Elegir qué suena">${ICON.songs}Canciones</button>
+          <div class="transport">
+            ${mb('previous', '⏮', 'Anterior; si ya lleva unos segundos, vuelve al principio')}
+            <button class="btn primary" id="now-toggle" data-act="music" data-action="toggle"></button>
+            ${mb('next', '⏭', 'Siguiente')}
+            ${mb('stop', 'Parar', 'Para la música en todos los altavoces', 'ghost')}
+          </div>
         </div>
       </div>
       <div class="progress" data-act="seek" title="Pulsa para saltar a ese punto de la canción"><i id="now-bar"></i></div>
@@ -786,21 +811,35 @@ function renderMusic() {
         <button class="btn" data-act="speaker-all" title="Abre la página de altavoz en todos los móviles conectados">Abrir en todos</button>
       </div></div>
     ${devices.length ? `<div class="card flush scroll-x"><table class="matrix speakers">
-      <thead><tr><th>Móvil</th><th>Estado</th><th>Volumen</th><th>Sonido</th><th>Retraso</th><th></th></tr></thead>
+      <thead><tr><th>Móvil</th><th>Estado</th><th>Volumen</th><th>Retraso (ms)</th><th></th></tr></thead>
       <tbody>${devices.map(speakerRow).join('')}</tbody>
     </table></div>` : '<p class="problem">No hay móviles listos: conéctalos en <a href="#/">Dispositivos</a>.</p>'}
-    <p class="muted small">El volumen es el de la música de cada móvil, el mismo que cambian sus botones. Con «Suena» lo silencias o le
-      vuelves a dar voz de un clic, y con «Solo» suena únicamente ese. Si uno se oye antes que los demás, súbele el retraso, y si se oye
-      después, bájalo: la prueba de sincronía da un pitido por segundo para cuadrarlos de oído.
-      En los móviles, la página del altavoz ocupa toda la pantalla y la mantiene encendida: desde cualquiera se puede elegir
-      canción o pausar todos.</p>
-    <div class="section-head"><h2>Canciones</h2>
-      <div class="actions">
-        <label class="btn">Subir canciones<input type="file" id="song-files" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac" multiple hidden></label>
-        <button class="btn" data-act="music-folder" title="Abre en el PC la carpeta de la música: lo que copies ahí aparece aquí">Abrir la carpeta</button>
-      </div></div>
-    <div class="card flush"><table class="songs"><tbody id="songs"></tbody></table></div>`;
+    <p class="muted small">Si un móvil se oye antes que los demás, súbele el retraso; si se oye después, bájalo. La prueba de sincronía
+      (en Canciones) da un pitido por segundo para cuadrarlos de oído.</p>`;
   updateMusic();
+}
+
+// Las canciones, a pantalla completa: se busca escribiendo y se elige con un clic, o con Enter la primera que quede
+function openSongs() {
+  $('#songs-dlg').showModal();
+  $('#song-filter').value = '';
+  filterSongs();
+  $('#songs .song.playing')?.scrollIntoView({ block: 'center' });
+  $('#song-filter').focus();
+}
+
+// Sin tildes ni mayúsculas: «cancion» encuentra «Canción»
+const fold = s => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+function filterSongs() {
+  const text = $('#song-filter').value.trim(), words = fold(text).split(/\s+/).filter(Boolean);
+  let shown = 0;
+  for (const b of document.querySelectorAll('#songs .song')) {
+    const hit = words.every(w => b.dataset.key.includes(w));
+    b.parentElement.hidden = !hit;
+    shown += hit;
+  }
+  $('#songs-none').hidden = shown > 0 || !text;
+  $('#songs-none').textContent = `Ninguna canción con «${text}»`;
 }
 
 function speakerRow(d) {
@@ -808,17 +847,16 @@ function speakerRow(d) {
   return `<tr data-serial="${esc(d.serial)}" data-id="${esc(d.serialno)}">
     <td class="app-cell"><div class="app-name">${esc(title(d))}</div>${d.name ? `<div class="muted small">${esc(model(d))}</div>` : ''}</td>
     <td class="sp-state"></td>
-    <td class="nowrap"><input type="range" class="vol" min="0" max="100" step="1" disabled
-      aria-label="Volumen de la música en ${esc(title(d))}"><span class="vol-val small">…</span></td>
-    <td class="nowrap"><button class="btn small mute" data-act="mute"></button><button class="btn small" data-act="music"
-      data-action="solo" title="Que suene solo en este móvil; los demás se quedan en silencio">Solo</button></td>
+    <td class="nowrap"><button class="btn small icon mute" data-act="mute"></button><input type="range" class="vol" min="0" max="100" step="1"
+      disabled aria-label="Volumen de la música en ${esc(title(d))}"><span class="vol-val small">…</span><button class="btn small"
+      data-act="music" data-action="solo" title="Que suene solo en este móvil; los demás se quedan en silencio">Solo</button></td>
     <td class="nowrap"><button class="btn small icon" data-act="delay" data-step="-1" title="${esc(tip)}" aria-label="1 ms menos de retraso">−</button><input
       type="number" class="delay-val" min="-1000" max="1000" step="1" title="${esc(tip)}. Puedes escribirlo, de −1000 a 1000"
-      aria-label="Retraso de ${esc(title(d))} en milisegundos"><span class="small">ms</span><button class="btn small icon" data-act="delay"
+      aria-label="Retraso de ${esc(title(d))} en milisegundos"><button class="btn small icon" data-act="delay"
       data-step="1" title="${esc(tip)}" aria-label="1 ms más de retraso">+</button></td>
-    <td class="row-actions"><button class="btn small" data-act="screen"
-      title="Ver y manejar su pantalla desde el PC: para desbloquearlo o tocar «Toca para activar el altavoz»">Ver pantalla</button><button
-      class="btn small primary" data-act="speaker-open" title="Abre la página de altavoz en Chrome en este móvil">Abrir altavoz</button></td>
+    <td class="row-actions"><button class="btn small icon" data-act="screen" aria-label="Ver pantalla"
+      title="Ver pantalla: verla y manejarla desde el PC, para desbloquearlo o tocar «Toca para activar el altavoz»">${ICON.look}</button><button
+      class="btn small" data-act="speaker-open"></button></td>
   </tr>`;
 }
 
@@ -827,7 +865,7 @@ let songsKey = '';
 function updateMusic() {
   const { now, rooms, songs } = state.music;
   $('#now-song').textContent = now.song ? now.name : 'Nada sonando';
-  $('#now-state').textContent = !now.song ? 'Elige una canción abajo' : now.waiting ? 'Preparando los altavoces…' : now.playing ? 'Sonando' : 'En pausa';
+  $('#now-state').textContent = !now.song ? 'Elige una canción en «Canciones»' : now.waiting ? 'Preparando los altavoces…' : now.playing ? 'Sonando' : 'En pausa';
   $('#now-toggle').textContent = now.playing ? '⏸ Pausa' : now.song ? '▶ Seguir' : '▶ Reproducir';
   $('#now-pos').textContent = now.song ? mmss(now.position) : '';
   $('#now-dur').textContent = now.song ? mmss(now.duration) : '';
@@ -839,7 +877,7 @@ function updateMusic() {
   for (const tr of document.querySelectorAll('#music tr[data-id]')) {
     const room = rooms[tr.dataset.id];
     const [text, kind, tip] = !room?.linked ? (room?.error ? ['No se abrió', 'bad', '']
-      : ['Sin abrir', '', 'Pulsa «Abrir altavoz»: el móvil abre la página de altavoz en Chrome'])
+      : ['Sin abrir', '', 'Pulsa «Abrir»: el móvil abre la página de altavoz en Chrome'])
       : room.phase === 'tap' ? SPEAKER_STATE.tap
       : room.error ? ['Error', 'bad', '']
       : SPEAKER_STATE[room.phase] || ['Conectado', '', ''];
@@ -850,44 +888,52 @@ function updateMusic() {
       + `Lo corrige solo, sin saltos: ahora va un ${num(room.speed || 0)} % más ${room.speed < 0 ? 'despacio' : 'deprisa'}. ${margin}. `
       + `Recolocado de golpe ${room.fixes} ${room.fixes === 1 ? 'vez' : 'veces'}`
       + (room.jitter != null ? `. Lo que baila la lectura de su audio: ±${num(room.jitter)} ms` : '');
-    const clock = !room?.linked ? ''
-      : room.phase === 'playing' && drift ? `<span class="muted small sp-clock" title="${esc(drift)}">desfase ${Math.round(Math.abs(room.off))} ms</span>`
-      : room.rtt != null ? `<span class="muted small sp-clock" title="${esc(margin)}">±${Math.max(1, Math.round(room.rtt / 2))} ms</span>` : '';
-    tr.querySelector('.sp-state').innerHTML = `<span class="val ${kind}" title="${esc(tip)}">${esc(text)}</span>${clock}`
-      + (room?.error ? `<div class="err-text small">${esc(room.error)}</div>` : '')
-      + (room?.lan ? `<div class="muted small" title="Su Android es viejo: llega al PC por la wifi y Chrome no le deja mantener la pantalla encendida. Enchufado, con «Pantalla encendida mientras carga» (Ajustes), no se apaga">Por la wifi: déjalo enchufado</div>` : '');
+    const clock = room?.linked && room.phase === 'playing' && drift
+      ? `<span class="muted small sp-clock" title="${esc(drift)}">desfase ${Math.round(Math.abs(room.off))} ms</span>` : '';
+    tr.querySelector('.sp-state').innerHTML = `<span class="val ${kind}" title="${esc([tip, room?.linked && margin].filter(Boolean).join('. '))}">${esc(text)}</span>${clock}`
+      + (room?.lan ? `<span class="tag" title="Su Android es viejo: llega al PC por la wifi y Chrome no le deja mantener la pantalla encendida. Enchufado, con «Pantalla encendida mientras carga» (Ajustes), no se apaga. Déjalo enchufado">wifi</span>` : '')
+      + (room?.error ? `<div class="err-text small">${esc(room.error)}</div>` : '');
+    // Los botones de icono se rehacen solo al cambiar, para no pisar uno que está trabajando
     const on = room ? room.on : true;
     const mute = tr.querySelector('.mute');
-    mute.textContent = on ? '🔊 Suena' : '🔇 Silenciado';
-    mute.classList.toggle('off', !on);
-    mute.title = on ? 'Silenciar este móvil' : 'Que vuelva a sonar';
+    if (mute.dataset.on !== String(on)) {
+      mute.dataset.on = on;
+      mute.innerHTML = on ? ICON.sound : ICON.muted;
+      mute.classList.toggle('off', !on);
+      mute.title = on ? 'Suena: pulsa para silenciarlo' : 'Silenciado: pulsa para que vuelva a sonar';
+      mute.setAttribute('aria-label', on ? 'Silenciar' : 'Que suene');
+    }
     tr.classList.toggle('silenced', !on);
     const delayInput = tr.querySelector('.delay-val');
     if (document.activeElement !== delayInput) delayInput.value = room?.delay || 0;
     // Si ya funciona, el botón la recarga (por si algo va raro); si no, la abre
     const open = tr.querySelector('[data-act=speaker-open]');
     const working = Boolean(room?.linked && room.phase && room.phase !== 'tap' && !room.error);
-    open.textContent = working ? 'Reabrir' : 'Abrir altavoz';
-    open.classList.toggle('primary', !working);
-    open.classList.toggle('ghost', working);
-    open.dataset.again = working ? '1' : '';
-    open.title = working ? 'Vuelve a cargar la página de altavoz en este móvil' : 'Abre la página de altavoz en Chrome en este móvil';
+    if (open.dataset.again !== (working ? '1' : '')) {
+      open.dataset.again = working ? '1' : '';
+      open.innerHTML = working ? ICON.reload : 'Abrir';
+      open.classList.toggle('primary', !working);
+      open.classList.toggle('ghost', working);
+      open.classList.toggle('icon', working);
+      open.setAttribute('aria-label', working ? 'Reabrir' : 'Abrir altavoz');
+      open.title = working ? 'Reabrir: vuelve a cargar la página de altavoz en este móvil' : 'Abre la página de altavoz en Chrome en este móvil';
+    }
   }
 
   const key = songs.map(s => s.id).join('\n');
   if (key !== songsKey || !$('#songs').children.length) {
     songsKey = key;
-    $('#songs').innerHTML = songs.map(s => `<tr data-song="${esc(s.id)}">
-        <td class="play-cell"><button class="btn small" data-act="music" data-action="play" title="Ponerla en los altavoces marcados">▶</button></td>
-        <td class="app-cell"><span class="song-name">${esc(s.name)}</span>${s.test ? tag('Para cuadrar los altavoces') : ''}</td>
-        <td class="dur muted small"></td>
-      </tr>`).join('') + (songs.length > 1 ? '' : `<tr><td colspan="3" class="empty muted">Aún no hay canciones.
-        Súbelas con «Subir canciones» o cópialas a la carpeta <code>musica</code> del proyecto (mp3, m4a, ogg, wav o flac).</td></tr>`);
+    $('#songs').innerHTML = songs.map(s => `<li><button class="song" data-act="pick" data-song="${esc(s.id)}" data-key="${esc(fold(s.name))}"
+        title="Ponerla en los altavoces marcados"><span class="song-name">${esc(s.name)}</span>${s.test ? tag('Para cuadrar los altavoces') : ''}<span
+        class="dur muted small"></span></button></li>`).join('') + (songs.length > 1 ? '' : `<li class="empty muted">Aún no hay canciones.
+        Súbelas con «Subir canciones» o cópialas a la carpeta <code>datos/musica</code> del proyecto (mp3, m4a, ogg, wav o flac).</li>`);
+    $('#songs-count').textContent = songs.filter(s => !s.test).length || '';
+    if ($('#songs-dlg').open) filterSongs();
   }
-  for (const tr of document.querySelectorAll('#songs tr[data-song]')) {
-    const s = songs.find(x => x.id === tr.dataset.song);
-    tr.classList.toggle('playing', tr.dataset.song === now.song);
-    tr.querySelector('.dur').textContent = mmss(s?.duration);
+  const byId = new Map(songs.map(s => [s.id, s]));
+  for (const b of document.querySelectorAll('#songs .song')) {
+    b.classList.toggle('playing', b.dataset.song === now.song);
+    b.querySelector('.dur').textContent = mmss(byId.get(b.dataset.song)?.duration);
   }
 }
 
@@ -1005,10 +1051,10 @@ async function uploadSongs(input) {
 }
 
 // Cada segundo, cómo va la canción y cada altavoz; cada 5 s, el volumen de cada móvil; cada 10 s, si se ha
-// conectado o ido algún móvil
+// conectado o ido algún móvil. Con las canciones abiertas sigue (marca la que suena); con otra ventana, no
 let musicPolling = false, musicTicks = 0;
 setInterval(async () => {
-  if (musicPolling || document.hidden || !$('#music .now') || document.querySelector('dialog[open]')) return;
+  if (musicPolling || document.hidden || !$('#music .now') || $('#dialog').open) return;
   musicPolling = true;
   try {
     await refreshMusic();
@@ -1205,6 +1251,14 @@ const actions = {
   'speaker-open': btn => busy(btn, () => openSpeakers([deviceBy(ctx(btn, 'serial'))], btn.dataset.again === '1')),
   'speaker-all': btn => busy(btn, () => openSpeakers(state.devices.filter(isReady))),
   'music-folder': btn => busy(btn, () => post('/music/folder')),
+  songs: openSongs,
+  'songs-close': () => $('#songs-dlg').close(),
+  pick: btn => busy(btn, async () => {
+    const { warning } = await post('/music/play', { song: btn.dataset.song });
+    if (warning) toast(warning, 'error');
+    $('#songs-dlg').close();
+    await refreshMusic();
+  }),
   mute: btn => busy(btn, () => toggleMute(btn)),
   seek: (bar, e) => seekTo(bar, e).catch(err => toast(err.message, 'error')),
   delay: btn => busy(btn, async () => {
@@ -1244,6 +1298,13 @@ view.addEventListener('click', e => {
 
 view.addEventListener('input', e => {
   if (e.target.matches('.vol')) showVolume(e.target);
+  if (e.target.matches('#song-filter')) filterSongs();
+});
+
+view.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !e.target.matches('#song-filter')) return;
+  e.preventDefault();
+  $('#songs li:not([hidden]) .song')?.click();
 });
 
 view.addEventListener('change', e => {

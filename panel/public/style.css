@@ -168,7 +168,7 @@ dialog menu a.btn { text-decoration: none; }
 .now-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
 .now-title { display: flex; flex-direction: column; min-width: 0; }
 .now-title strong { font-size: 20px; overflow-wrap: anywhere; }
-.now-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.now-controls, .transport { display: flex; flex-wrap: wrap; gap: 8px; }
 .progress { height: 8px; margin-top: 16px; border-radius: 4px; background: var(--chip); overflow: hidden; cursor: pointer; }
 .progress:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
 .now-options { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
@@ -184,7 +184,8 @@ dialog menu a.btn { text-decoration: none; }
 .vol:disabled { cursor: default; opacity: .5; }
 .vol.busy { opacity: .5; }
 .vol-val { display: inline-block; min-width: 3.6em; margin-left: 8px; font-variant-numeric: tabular-nums; }
-.btn.mute { min-width: 8.4em; justify-content: flex-start; }
+.btn.small.icon { padding: 4px 6px; }
+.btn.mute { margin-right: 8px; }
 .btn.mute.off { background: var(--warn-weak); border-color: color-mix(in srgb, var(--warn) 45%, transparent); color: var(--warn); }
 .speakers tr.silenced .app-name { opacity: .55; }
 .progress i { display: block; width: 0; height: 100%; background: var(--accent); transition: width 1s linear; }
@@ -197,13 +198,27 @@ dialog menu a.btn { text-decoration: none; }
 .delay-val { width: 4.2em; margin: 0 4px; padding: 3px 4px; border: 1px solid var(--border-strong); border-radius: 6px;
   background: var(--surface); color: var(--text); font: inherit; font-size: 13px; text-align: center; -moz-appearance: textfield; }
 .delay-val::-webkit-inner-spin-button, .delay-val::-webkit-outer-spin-button { margin: 0; -webkit-appearance: none; }
-.delay-val + .small { margin-right: 4px; }
 .sp-clock { margin-left: 8px; white-space: nowrap; }
 .sp-state .err-text { max-width: 300px; margin-top: 4px; }
 .val.bad { background: var(--danger-weak); color: var(--danger); }
-.songs .play-cell { width: 1%; padding-right: 0; }
-.songs tr.playing .song-name { color: var(--accent-text); font-weight: 600; }
-.songs .dur { width: 1%; text-align: right; white-space: nowrap; }
+/* Las canciones, a pantalla completa: arriba el buscador y lo de subir; debajo la lista, que es lo único que se desplaza */
+dialog.full { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; border-radius: 0; }
+dialog.full[open] { display: flex; flex-direction: column; }
+.full-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px max(16px, calc((100% - 900px) / 2));
+  border-bottom: 1px solid var(--border); }
+.full-head h2 { flex: 1 0 auto; margin: 0; }
+.full-head input[type=search] { order: 1; flex: 1 1 100%; padding: 10px 14px; font-size: 16px; }
+.song-list { flex: 1; margin: 0; padding: 8px max(16px, calc((100% - 900px) / 2)) 40px; overflow-y: auto; list-style: none; }
+.song { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border: 0; border-radius: 10px;
+  background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.song:hover, .song:focus-visible { background: var(--hover); }
+.song::before { content: "▶"; flex: none; width: 1.2em; font-size: 12px; color: var(--muted); opacity: 0; }
+.song:hover::before { opacity: 1; }
+.song .song-name { flex: 1; min-width: 0; }
+.song.playing { background: var(--accent-weak); }
+.song.playing .song-name, .song.playing::before { color: var(--accent-text); font-weight: 600; opacity: 1; }
+.song.busy { opacity: .6; cursor: progress; }
+.song .tag { flex: none; }
 
 /* Tablas de apps */
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-bottom: 12px; }
@@ -341,4 +356,5 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
   .apps tr { border-bottom: 1px solid var(--border); }
   .apps .row-actions { grid-column: 1 / -1; text-align: left; white-space: normal; padding-top: 0; }
   .apps .star-cell { width: auto; }
+  .full-head > .btn:not(.icon) { order: 2; }
 }
