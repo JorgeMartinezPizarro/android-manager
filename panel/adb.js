@@ -69,15 +69,27 @@ function startServer() {
   });
 }
 
-// Una sola llamada por móvil: propiedades, batería y red separadas por @@
+// Una sola llamada por móvil: propiedades, batería, red y espacio separados por @@. El df de Android 6 o antes no
+// entiende -k: ese da los tamaños con letra («11.0G»)
 const INFO = [
   'getprop ro.serialno', 'getprop ro.product.manufacturer', 'getprop ro.product.model',
   'getprop ro.build.version.release', 'getprop ro.build.version.sdk', 'echo @@', 'dumpsys battery', 'echo @@',
-  'ip -f inet addr show wlan0 2>/dev/null', 'true',
+  'ip -f inet addr show wlan0 2>/dev/null', 'echo @@', 'df -k /data 2>/dev/null || df /data 2>/dev/null', 'true',
 ].join('; ');
 
+// La última línea de df: «/dev/block/… 11572432 7011612 4555700 61% /data» (en KB) o «/data 11.0G 6.6G 4.4G 4096»
+function storage(df) {
+  const cols = df.trim().split('\n').pop().trim().split(/\s+/);
+  const bytes = v => {
+    const m = /^([\d.]+)([KMGT]?)$/i.exec(v || '');
+    return m ? Math.round(Number(m[1]) * 1024 ** (1 + 'KMGT'.indexOf((m[2] || 'K').toUpperCase()))) : NaN;
+  };
+  const [total, free] = [bytes(cols[1]), bytes(cols[3])];
+  return total > 0 && free >= 0 ? { total, free } : null;
+}
+
 async function info(serial) {
-  const [props, battery = '', net = ''] = (await shell(serial, INFO)).split('@@\n');
+  const [props, battery = '', net = '', df = ''] = (await shell(serial, INFO)).split('@@\n');
   const [serialno, maker, model, android, sdk] = props.split('\n').map(s => s.trim());
   const level = battery.match(/level:\s*(\d+)/);
   return {
@@ -85,6 +97,7 @@ async function info(serial) {
     battery: level ? Number(level[1]) : null,
     charging: /(AC|USB|Wireless) powered: true/.test(battery),
     ip: net.match(/inet (\d+\.\d+\.\d+\.\d+)/)?.[1] || null,
+    storage: storage(df),
   };
 }
 

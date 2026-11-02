@@ -191,6 +191,13 @@ function deviceCard(d) {
     : d.state !== 'device' ? `Estado: ${d.state}` : d.error;
   const battery = d.battery == null ? '' : `<span class="chip" title="Batería${d.charging ? ' (cargando)' : ''}">
       <span class="batt ${d.battery <= 20 ? 'low' : ''}"><i style="width:${d.battery}%"></i></span>${d.battery} %${d.charging ? ' ⚡' : ''}</span>`;
+  // En GB de los del móvil (de 1000 MB), que es como lo cuentan sus Ajustes. Poco sitio: menos de 1 GB o del 10 %
+  const space = d.storage && (() => {
+    const { free, total } = d.storage;
+    const used = Math.round((1 - free / total) * 100);
+    return `<span class="chip ${free < 1e9 || free < total / 10 ? 'low' : ''}"
+      title="Almacenamiento interno: ${gb(free)} libres de ${gb(total)} (${used} % ocupado)">${ICON.disk}${gb(free)} libres</span>`;
+  })();
   return `<article class="card device ${ready ? '' : 'warn'}" data-serial="${esc(d.serial)}">
     <div class="dev-head">
       ${PHONE}
@@ -201,7 +208,7 @@ function deviceCard(d) {
       ${ready ? '<button class="btn ghost icon" data-act="rename" title="Ponerle nombre">✎</button>' : ''}
     </div>
     <div class="chips">
-      <span class="chip">${d.wifi ? `Wi-Fi · ${esc(d.ip || d.serial.split(':')[0])}` : 'Cable USB'}</span>${battery}
+      <span class="chip">${d.wifi ? `Wi-Fi · ${esc(d.ip || d.serial.split(':')[0])}` : 'Cable USB'}</span>${battery}${space || ''}
     </div>
     ${problem ? `<p class="problem">${esc(problem)}</p>` : ''}
     <div class="actions">
@@ -917,7 +924,10 @@ const ICON = {
   control: icon('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>', 18),
   wifi: icon('<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/>', 18),
   unplug: icon('<path d="m19 5 3-3M2 22l3-3M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4zM7.5 13.5 10 11M10.5 16.5 13 14M12 6l6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0z"/>', 18),
+  disk: icon('<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>', 13),
 };
+// 4555700000 → «4,6 GB»; por encima de 10, sin decimales
+const gb = bytes => `${(bytes / 1e9).toLocaleString('es-ES', { maximumFractionDigits: bytes < 1e10 ? 1 : 0 })} GB`;
 // Un botón solo con icono; lo que hace sale al pasar el ratón y lo leen los lectores de pantalla
 const iconBtn = (act, svg, label, kind = '') =>
   `<button class="btn icon ${kind}" data-act="${act}" title="${esc(label)}" aria-label="${esc(label)}">${svg}</button>`;

@@ -192,6 +192,7 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
 .batt { display: inline-block; width: 22px; height: 11px; padding: 1px; border: 1.5px solid currentColor; border-radius: 3px; }
 .batt i { display: block; height: 100%; border-radius: 1px; background: var(--ok); }
 .batt.low i { background: var(--danger); }
+.chip.low { color: var(--danger); background: var(--danger-weak); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
 .actions .btn.icon { padding: 7px 9px; }
 .actions .end { margin-left: auto; }

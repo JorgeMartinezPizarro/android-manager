@@ -131,6 +131,11 @@ function shell(p, c) {
   if ((m = c.match(/^getprop (\S+)$/))) return out(props[m[1]] ?? '');
   if ((m = c.match(/^echo (.*)$/))) return out(m[1]);
   if (c === 'dumpsys battery') return out(`Current Battery Service state:\n  AC powered: false\n  USB powered: ${p.battery < 100}\n  level: ${p.battery}\n  scale: 100`);
+  if (c.startsWith('df ')) {
+    // Lo que queda libre sale del número de serie para que cada móvil tenga el suyo; el Samsung, casi lleno
+    const total = 52428800, free = p.sn === 'R58M30ABCDE' ? 734003 : 3145728 * (1 + p.sn.charCodeAt(1) % 9);
+    return out(`Filesystem       1K-blocks    Used Available Use% Mounted on\n/dev/block/dm-1  ${total} ${total - free} ${free} ${Math.round(100 - free / total * 100)}% /data`);
+  }
   if (c.startsWith('ip ')) return out(`30: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500\n    inet ${p.ip}/24 brd 192.168.1.255 scope global wlan0`);
   if ((m = c.match(/^(?:pm|cmd package) list packages((?: -\w)*)(?: (\S+))?$/))) {
     for (const [pkg, a] of Object.entries(p.apps).sort()) {

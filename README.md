@@ -66,7 +66,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
 
 ## Qué hace
 
-- **Dispositivos**: los móviles conectados con batería, conexión y un nombre que tú eliges.
+- **Dispositivos**: los móviles conectados con batería, conexión, espacio libre en la memoria interna (en rojo si
+  queda menos de 1 GB o del 10 %; al pasar el ratón, el total y lo ocupado) y un nombre que tú eliges.
   **Ver pantalla** abre la pantalla del móvil en una ventana del PC (por wifi tarda unos segundos) y lo manejas
   con el ratón y el teclado. La ventana sigue abierta aunque cierres el panel.
   Usa [scrcpy](https://github.com/Genymobile/scrcpy): el instalador lo lleva dentro; desde el código, se instala una
