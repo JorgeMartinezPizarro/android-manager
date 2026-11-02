@@ -1,0 +1,15 @@
+# Las canciones de la pestaña Música
+musica/
+
+# Datos de casa: los escribe el panel (o tú) y sin ellos arranca vacío
+devices.txt
+names.txt
+music.json
+settings.json
+apps.json
+keep.txt
+keep.txt.bak
+apks/
+
+# Ajustes locales de Claude Code
+.claude/

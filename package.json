@@ -1,0 +1,12 @@
+{
+  "name": "panel-android",
+  "private": true,
+  "description": "Panel web para gestionar las apps de los Android de casa con adb",
+  "scripts": {
+    "start": "node panel/server.js --open",
+    "demo": "node panel/demo.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

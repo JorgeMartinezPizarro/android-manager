@@ -1,0 +1,561 @@
+// music.js — música por casa: cada móvil abre en Chrome la página de altavoz (public/speaker.html) y suenan a la vez las
+// canciones de la carpeta musica/. No se manda «play» a cada móvil, porque cada uno tarda distinto en obedecer (de 0,2 a 3 s):
+// todos ajustan su reloj con el del PC y el PC les dice a qué hora exacta empieza la canción.
+'use strict';
+const fs = require('node:fs');
+const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+const { pipeline } = require('node:stream/promises');
+const adb = require('./adb');
+const cfg = require('./config');
+
+// Los móviles llegan por adb reverse a este puerto del PC, que solo escucha en el propio PC. Los de Android 7, que no
+// pueden, llegan por la wifi de casa: para ellos el puerto escucha también en la IP del PC, solo para las IP de esos móviles
+const PORT = Number(process.env.MUSIC_PORT) || (Number(process.env.PORT) || 8765) + 2;
+const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+// MUSIC_SILENT=1: los altavoces hacen todo igual pero sin que se oiga, para probar sin molestar en casa
+const SILENT = process.env.MUSIC_SILENT === '1';
+const ID = /^[\w.:-]{1,64}$/;
+const DIR = cfg.dataPath('musica');
+const PUBLIC = path.join(__dirname, 'public');
+const TYPES = {
+  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.opus': 'audio/ogg',
+  '.wav': 'audio/wav', '.flac': 'audio/flac',
+};
+const TEST = '*prueba'; // la prueba de sincronía; «*» no puede estar en un nombre de archivo de Windows
+const LEAD = 800; // ms entre que el PC fija la hora de empezar y que empieza: lo que tarda el aviso en llegar a todos
+const WAIT = 15000; // lo que se espera, como mucho, a que todos los altavoces hayan cargado la canción
+
+// El reloj del PC con decimales; el de los altavoces se ajusta a este
+const now = () => performance.timeOrigin + performance.now();
+
+// ── Canciones ──
+
+// Los archivos de audio de musica/ y sus subcarpetas, en orden alfabético; el id es la ruta con «/»
+function songs() {
+  let files = [];
+  try { files = fs.readdirSync(DIR, { recursive: true }); } catch {}
+  return files.map(f => f.split(path.sep).join('/'))
+    .filter(f => Object.hasOwn(TYPES, path.extname(f).toLowerCase()))
+    .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
+    .map(id => ({ id, name: nameOf(id) }));
+}
+
+const nameOf = id => (id === TEST ? 'Prueba de sincronía (pitidos)' : id.replace(/\.[^./]+$/, '').replace(/\//g, ' · '));
+
+// WAV mono de 16 bits con la onda que dé sample(t), entre -1 y 1
+function wav(seconds, sample, rate = 22050) {
+  const n = Math.round(seconds * rate);
+  const out = Buffer.alloc(44 + n * 2);
+  out.write('RIFF', 0);
+  out.writeUInt32LE(36 + n * 2, 4);
+  out.write('WAVEfmt ', 8);
+  out.writeUInt32LE(16, 16);
+  out.writeUInt16LE(1, 20); // PCM
+  out.writeUInt16LE(1, 22); // un canal
+  out.writeUInt32LE(rate, 24);
+  out.writeUInt32LE(rate * 2, 28);
+  out.writeUInt16LE(2, 32);
+  out.writeUInt16LE(16, 34);
+  out.write('data', 36);
+  out.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) out.writeInt16LE(Math.round(Math.max(-1, Math.min(1, sample(i / rate))) * 32000), 44 + i * 2);
+  return out;
+}
+
+// Un pitido corto cada segundo, más agudo uno de cada cuatro: si los altavoces van a la vez, se oye uno solo
+const beeps = (seconds = 40) => wav(seconds, t => {
+  const s = Math.floor(t), d = t - s;
+  if (s < 1 || d > 0.05) return 0;
+  return Math.sin(2 * Math.PI * (s % 4 === 1 ? 1760 : 880) * t) * Math.min(1, d / 0.003, (0.05 - d) / 0.003) * 0.6;
+});
+let testWav = null;
+
+// ── Habitaciones y altavoces ──
+
+// Por número de serie del móvil (no cambia aunque cambie su conexión): si suena (o está silenciado), su retraso para
+// cuadrarlo de oído y la última conexión de adb, para volver a abrirle el puerto. Y si las canciones van en aleatorio
+const ROOMS = cfg.dataPath('music.json');
+const saved = (() => { try { return JSON.parse(fs.readFileSync(ROOMS, 'utf8')); } catch { return {}; } })();
+const rooms = saved.rooms || {};
+const prefs = { shuffle: Boolean(saved.shuffle) };
+const saveRooms = () => fs.writeFileSync(ROOMS, JSON.stringify({ rooms, ...prefs }, null, 2) + '\n');
+
+// Las páginas de altavoz abiertas: su conexión de avisos y lo último que han contado de sí mismas. active: ya ha sonado
+// alguna vez, así que si vuelve a pedir un toque (se ha recargado) el panel se lo da; taps: toques seguidos sin éxito
+const speakers = new Map();
+function speaker(id) {
+  if (!speakers.has(id)) {
+    speakers.set(id, {
+      clients: new Set(), status: {}, openedAt: 0, tapUntil: 0, tapping: false, taps: 0, active: false, tapError: '',
+      rest: false, lighting: false, lightError: '',
+    });
+  }
+  return speakers.get(id);
+}
+
+// La versión de la página de altavoz: cuando cambia, las páginas abiertas se recargan solas
+const pageVersion = () => ['speaker.html', 'speaker.js']
+  .map(f => { try { return fs.statSync(path.join(PUBLIC, f)).mtimeMs; } catch { return 0; } }).join('-');
+const linked = sp => sp.clients.size > 0;
+
+// ── Lo que suena ──
+
+// startAt: la hora del PC a la que suena el principio de la canción; null mientras se espera a los altavoces.
+// stopAt: la hora (Date.now) a la que se pausa sola, si se ha puesto el temporizador
+const st = { song: null, playing: false, startAt: null, position: 0, since: 0, stopAt: null };
+const durations = new Map();
+let endTimer = null, waitTimer = null, sleepTimer = null;
+
+const position = () => (st.playing && st.startAt != null ? Math.max(0, (now() - st.startAt) / 1000) : st.position);
+
+function view(id, list = songs(), v = pageVersion()) {
+  const room = rooms[id] || {};
+  return {
+    song: st.song, title: st.song && nameOf(st.song), playing: st.playing, startAt: st.startAt, position: st.position,
+    stopAt: st.stopAt, on: Boolean(room.on), delay: room.delay || 0, room: cfg.names().get(id) || '',
+    songs: list.map(s => [s.id, s.name]), v,
+  };
+}
+
+function broadcast() {
+  const list = songs(), v = pageVersion();
+  for (const [id, sp] of speakers) {
+    const data = `data: ${JSON.stringify(view(id, list, v))}\n\n`;
+    for (const res of sp.clients) res.write(data);
+  }
+  scheduleEnd();
+}
+
+// Los altavoces que tienen que sonar y aún no han cargado la canción; los que esperan un toque o fallan no cuentan
+const waitingFor = () => [...speakers].filter(([id, sp]) => linked(sp) && rooms[id]?.on
+  && !['tap', 'error'].includes(sp.status.phase)
+  && !(sp.status.song === st.song && ['ready', 'playing'].includes(sp.status.phase)));
+
+function maybeStart() {
+  if (!st.playing || st.startAt != null) return;
+  if (waitingFor().length && now() - st.since < WAIT) return;
+  clearTimeout(waitTimer);
+  st.startAt = now() + LEAD - st.position * 1000;
+  broadcast();
+}
+
+// Primero los altavoces cargan la canción; cuando todos la tienen (o pasa WAIT), el PC fija la hora de empezar
+function startWhenReady() {
+  st.startAt = null;
+  st.since = now();
+  clearTimeout(waitTimer);
+  waitTimer = setTimeout(maybeStart, WAIT + 50);
+  broadcast();
+  maybeStart();
+}
+
+// Al acabar, la siguiente; tras la última, otra vez la primera. La prueba de sincronía no sigue con nada
+function scheduleEnd() {
+  clearTimeout(endTimer);
+  const d = durations.get(st.song);
+  if (!st.playing || st.startAt == null || !d) return;
+  endTimer = setTimeout(() => {
+    try { st.song === TEST ? stop() : skip(1); } catch { stop(); }
+  }, Math.max(0, st.startAt + d * 1000 - now()) + 300);
+}
+
+// Cuántos altavoces van a sonar; si ninguno, el aviso para el panel
+function warning() {
+  const n = [...speakers].filter(([id, sp]) => linked(sp) && rooms[id]?.on && sp.status.phase !== 'tap').length;
+  return n ? '' : 'No suena en ningún móvil: abre el altavoz en los que quieras y quítales el silencio';
+}
+
+function play(song) {
+  if (song !== TEST && !songs().some(s => s.id === song)) throw new Error('Esa canción ya no está en la carpeta de música');
+  Object.assign(st, { song, playing: true, position: 0 });
+  startWhenReady();
+}
+
+function pause() {
+  if (!st.playing) return;
+  Object.assign(st, { position: position(), playing: false, startAt: null });
+  broadcast();
+}
+
+function resume() {
+  if (st.playing) return;
+  if (!st.song) return skip(1);
+  st.playing = true;
+  startWhenReady();
+}
+
+function stop() {
+  Object.assign(st, { song: null, playing: false, startAt: null, position: 0 });
+  broadcast();
+}
+
+// Hacia atrás, si ya lleva unos segundos, vuelve al principio de la misma. En aleatorio, hacia delante, cualquier otra
+function skip(step) {
+  const list = songs();
+  if (!list.length) throw new Error('No hay canciones: copia alguna a la carpeta de música');
+  if (step < 0 && st.song && position() > 5) return seek(0);
+  const i = list.findIndex(s => s.id === st.song);
+  if (step > 0 && prefs.shuffle && list.length > 1) {
+    const others = list.filter((_, j) => j !== i);
+    return play(others[Math.floor(Math.random() * others.length)].id);
+  }
+  play(list[i < 0 ? (step > 0 ? 0 : list.length - 1) : (i + step + list.length) % list.length].id);
+}
+
+// Salta a ese segundo de la canción; los altavoces ya la tienen cargada, así que vuelven a empezar casi a la vez
+function seek(seconds) {
+  if (!st.song) return;
+  const d = durations.get(st.song);
+  st.position = Math.max(0, Math.min(Number(seconds) || 0, d ? d - 1 : Infinity));
+  return st.playing ? startWhenReady() : broadcast();
+}
+
+// Solo suena en ese móvil: los demás quedan silenciados
+function solo(id) {
+  if (!ID.test(id || '')) throw new Error('Móvil no válido');
+  rooms[id] ||= { on: true, delay: 0 };
+  for (const [other, room] of Object.entries(rooms)) room.on = other === id;
+  saveRooms();
+  broadcast();
+  maybeStart();
+}
+
+function unmuteAll() {
+  for (const room of Object.values(rooms)) room.on = true;
+  saveRooms();
+  broadcast();
+  maybeStart();
+}
+
+// Temporizador: dentro de tantos minutos se pausa (0 lo quita)
+function sleep(minutes) {
+  minutes = Math.max(0, Math.min(600, Number(minutes) || 0));
+  clearTimeout(sleepTimer);
+  st.stopAt = minutes ? Date.now() + minutes * 60000 : null;
+  if (minutes) sleepTimer = setTimeout(() => { st.stopAt = null; pause(); broadcast(); }, minutes * 60000);
+  broadcast();
+}
+
+// Las órdenes que se pueden dar desde el panel y desde la pantalla de cada altavoz
+const CONTROL = {
+  play: ({ song }) => play(String(song || '')),
+  toggle: () => (st.playing ? pause() : resume()),
+  next: () => skip(1),
+  previous: () => skip(-1),
+  stop,
+  seek: ({ position: p }) => seek(p),
+  here: ({ id, on }) => setRoom(id, { on }),
+  solo: ({ id }) => solo(id),
+  all: unmuteAll,
+  shuffle: ({ on }) => { prefs.shuffle = Boolean(on); saveRooms(); },
+  sleep: ({ minutes }) => sleep(minutes),
+};
+
+function control(action, body = {}) {
+  if (!Object.hasOwn(CONTROL, action)) throw new Error(`Acción desconocida: ${action}`);
+  CONTROL[action](body);
+  return ['play', 'toggle', 'next', 'previous'].includes(action) && st.playing ? warning() : '';
+}
+
+function setRoom(id, { on, delay, serial } = {}) {
+  if (!ID.test(id || '')) throw new Error('Móvil no válido');
+  const room = rooms[id] ||= { on: true, delay: 0 };
+  if (on !== undefined) room.on = Boolean(on);
+  if (delay !== undefined) room.delay = Math.max(-1000, Math.min(1000, Math.round(Number(delay) || 0)));
+  if (serial) room.serial = serial;
+  saveRooms();
+  broadcast();
+  maybeStart();
+}
+
+// Abre la página de altavoz en el móvil. Cuando diga que espera un toque (Chrome no deja sonar sin él), se lo da el panel;
+// si el móvil está bloqueado con PIN, lo vuelve a intentar con cada aviso de la página durante 2 minutos
+// again: recargarla aunque ya esté abierta y sonando
+async function open(serial, id, again = false) {
+  const sp = speaker(id);
+  const working = linked(sp) && sp.status.phase && sp.status.phase !== 'tap';
+  if (working && !again) return (remember(id, serial), 'Ya estaba abierto');
+  Object.assign(sp, { openedAt: Date.now(), tapUntil: Date.now() + 120000, taps: 0, tapError: '' });
+  let base = `http://localhost:${PORT}`, lan = null;
+  try {
+    try {
+      await adb.reverse(serial, PORT);
+    } catch (e) {
+      if (!e.oldAdb) throw e;
+      ({ base, ip: lan } = await viaWifi(serial));
+    }
+    // t: una dirección distinta cada vez, para que Chrome la cargue de nuevo y no se limite a enseñar la pestaña
+    await adb.openSpeaker(serial, `${base}/?id=${encodeURIComponent(id)}${SILENT ? '&silencio' : ''}&t=${Date.now()}`);
+  } catch (e) {
+    Object.assign(sp, { openedAt: 0, tapUntil: 0 });
+    throw e;
+  }
+  remember(id, serial, lan);
+  return working ? 'Reabriendo el altavoz' : lan ? 'Abriendo el altavoz por la wifi' : 'Abriendo el altavoz';
+}
+
+// Cada móvil que ha hecho de altavoz queda guardado; de primeras, suena. lan: su IP, si llega al PC por la wifi
+function remember(id, serial, lan) {
+  const room = rooms[id] ||= { on: true, delay: 0 };
+  if (serial) {
+    room.serial = serial;
+    if (lan) room.lan = lan;
+    else delete room.lan;
+  }
+  saveRooms();
+}
+
+// ── Altavoces por la wifi (Android 7) ──
+
+const lanServers = new Map(); // IP del PC → promesa de su servidor escuchando
+const allowed = new Set(); // IP de los móviles que llegan por la wifi
+const plain = address => String(address || '').replace(/^::ffff:/, '');
+
+// La IP del PC en la misma red que el móvil
+function pcAddress(phoneIp) {
+  const int = ip => ip.split('.').reduce((n, b) => n * 256 + Number(b), 0);
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list || []) {
+      if (a.family === 'IPv4' && !a.internal && (int(a.address) & int(a.netmask)) === (int(phoneIp) & int(a.netmask))) return a.address;
+    }
+  }
+  return null;
+}
+
+function listenLan(address) {
+  if (!lanServers.has(address)) {
+    lanServers.set(address, new Promise((resolve, reject) => {
+      const lanServer = http.createServer(handle);
+      lanServer.once('error', e => {
+        lanServers.delete(address);
+        reject(new Error(e.code === 'EADDRINUSE' ? `El puerto ${PORT} de ${address} está ocupado` : e.message));
+      });
+      lanServer.listen(PORT, address, resolve);
+    }));
+  }
+  return lanServers.get(address);
+}
+
+async function viaWifi(serial) {
+  const ip = await adb.wifiIp(serial);
+  const address = ip && pcAddress(ip);
+  if (!address) throw new Error('Su Android es viejo y tiene que llegar al PC por la wifi, pero no lo encuentro en la misma red que el PC');
+  allowed.add(ip);
+  await listenLan(address);
+  return { base: `http://${address}:${PORT}`, ip };
+}
+
+function report(id, s) {
+  if (!ID.test(id || '')) throw new Error('Móvil no válido');
+  const sp = speaker(id);
+  const song = typeof s.song === 'string' ? s.song : null;
+  sp.status = {
+    phase: String(s.phase || ''), song, error: String(s.error || '').slice(0, 200),
+    rtt: Number.isFinite(s.rtt) ? s.rtt : null, fixes: Number(s.fixes) || 0,
+  };
+  if (song && s.duration > 0) durations.set(song, Number(s.duration));
+  // Pide un toque: recién abierta por el panel, o recargada tras haber sonado. Solo si está delante (si no, el toque
+  // caería en otra app) y como mucho 3 veces seguidas
+  if (sp.status.phase === 'tap' && (sp.tapUntil > Date.now() || sp.active) && s.visible !== false
+    && !sp.tapping && sp.taps < 3 && rooms[id]?.serial) {
+    sp.tapping = true;
+    adb.tapScreen(rooms[id].serial)
+      .then(() => { sp.taps++; sp.tapError = ''; })
+      .catch(e => { sp.tapError = e.message; })
+      .finally(() => { sp.tapping = false; });
+  }
+  if (sp.status.phase && sp.status.phase !== 'tap') Object.assign(sp, { active: true, taps: 0, tapUntil: 0, tapError: '' });
+  if (typeof s.rest === 'boolean') {
+    sp.rest = s.rest;
+    light(id);
+  }
+  maybeStart();
+  scheduleEnd();
+}
+
+// Mientras la página descansa, el brillo del móvil al mínimo; al tocarla, como estaba. Lo que había se guarda en music.json
+// (room.light) por si el panel se cierra con la pantalla baja. Si cambia de idea a medias, el bucle lo deja como pida al final
+const DIM = { mode: '0', level: '1' };
+async function light(id) {
+  const sp = speaker(id), room = rooms[id];
+  if (!room?.serial || sp.lighting) return;
+  sp.lighting = true;
+  try {
+    while (sp.rest !== Boolean(room.light)) {
+      if (sp.rest) {
+        room.light = await adb.brightness(room.serial);
+        saveRooms();
+        await adb.setBrightness(room.serial, DIM);
+      } else {
+        await adb.setBrightness(room.serial, room.light);
+        delete room.light;
+        saveRooms();
+      }
+    }
+    sp.lightError = '';
+  } catch (e) {
+    sp.lightError = `No he podido cambiar el brillo: ${e.message}`;
+  } finally {
+    sp.lighting = false;
+  }
+}
+
+// adb pierde el puerto de un móvil cuando este se desconecta o adb se reinicia: se le vuelve a abrir mientras no esté conectado
+function keepPorts() {
+  for (const [id, room] of Object.entries(rooms)) {
+    if (room.serial && !room.lan && !linked(speaker(id))) adb.reverse(room.serial, PORT).catch(() => {});
+  }
+}
+
+// ── Para el panel ──
+
+function status() {
+  return {
+    port: PORT,
+    songs: [{ id: TEST, name: nameOf(TEST), test: true }, ...songs()].map(s => ({ ...s, duration: durations.get(s.id) || null })),
+    now: {
+      song: st.song, name: st.song && nameOf(st.song), playing: st.playing, waiting: st.playing && st.startAt == null,
+      position: position(), duration: durations.get(st.song) || null, stopAt: st.stopAt, shuffle: prefs.shuffle,
+    },
+    rooms: Object.fromEntries(Object.entries(rooms).map(([id, room]) => {
+      const sp = speaker(id);
+      // Se le mandó abrir la página y al rato aún no ha llegado
+      const late = !linked(sp) && sp.openedAt && Date.now() - sp.openedAt > 30000
+        && 'Chrome no ha abierto la página: mira el móvil. Si tiene PIN, desbloquéalo; la primera vez, Chrome puede pedir que aceptes algo';
+      const error = sp.tapError || sp.lightError || late;
+      return [id, {
+        on: Boolean(room.on), delay: room.delay || 0, lan: Boolean(room.lan), linked: linked(sp),
+        ...(linked(sp) ? sp.status : {}), ...(error ? { error } : {}),
+      }];
+    })),
+  };
+}
+
+// La canción llega tal cual en el cuerpo; se escribe aparte y se renombra al final para que no salga a medias en la lista
+async function upload(req, name) {
+  name = path.basename(String(name || '')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '').trim();
+  if (!Object.hasOwn(TYPES, path.extname(name).toLowerCase())) {
+    throw new Error(`«${name}» no es una canción: valen mp3, m4a, aac, ogg, opus, wav y flac`);
+  }
+  fs.mkdirSync(DIR, { recursive: true });
+  const tmp = path.join(DIR, `.subiendo-${process.pid}-${Date.now()}`);
+  try {
+    await pipeline(req, fs.createWriteStream(tmp));
+    fs.renameSync(tmp, path.join(DIR, name));
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+  broadcast();
+  return name;
+}
+
+function openFolder() {
+  fs.mkdirSync(DIR, { recursive: true });
+  const [cmd, args] = process.platform === 'win32' ? ['explorer', [DIR]] : [process.platform === 'darwin' ? 'open' : 'xdg-open', [DIR]];
+  spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+}
+
+// ── El servidor de los altavoces ──
+
+const reply = (res, status, type, body) => {
+  res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
+  res.end(body);
+};
+const json = (res, data, status = 200) => reply(res, status, 'application/json; charset=utf-8', JSON.stringify(data));
+
+async function readJson(req) {
+  let text = '';
+  for await (const chunk of req) {
+    if ((text += chunk).length > 10_000) throw new Error('Petición demasiado grande');
+  }
+  const body = JSON.parse(text || '{}');
+  return body && typeof body === 'object' ? body : {};
+}
+
+function sendSong(res, id) {
+  if (id === TEST) return reply(res, 200, 'audio/wav', testWav ||= beeps());
+  const file = path.resolve(DIR, ...id.split('/'));
+  const type = TYPES[path.extname(file).toLowerCase()];
+  if (!type || !file.startsWith(DIR + path.sep)) return reply(res, 404, 'text/plain', 'No existe');
+  fs.stat(file, (err, s) => {
+    if (err || !s.isFile()) return reply(res, 404, 'text/plain', 'No existe');
+    res.writeHead(200, { 'Content-Type': type, 'Content-Length': s.size, 'Cache-Control': 'no-cache' });
+    fs.createReadStream(file).pipe(res);
+  });
+}
+
+// Avisos del PC a cada página (Server-Sent Events): el estado completo cada vez que cambia algo
+function events(req, res, id) {
+  if (!ID.test(id || '')) return reply(res, 400, 'text/plain', 'Falta el móvil');
+  if (!rooms[id]) remember(id); // una página abierta a mano también es un altavoz
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
+  res.write(`retry: 3000\ndata: ${JSON.stringify(view(id))}\n\n`);
+  const sp = speaker(id);
+  sp.clients.add(res);
+  sp.openedAt = 0; // ya llegó: si luego se va, no es que no se abriera
+  const ping = setInterval(() => res.write(': ping\n\n'), 15000);
+  req.on('close', () => {
+    clearInterval(ping);
+    sp.clients.delete(res);
+    if (!linked(sp)) {
+      sp.status = {};
+      sp.rest = false; // si la página se va, que el móvil no se quede con la pantalla a oscuras
+      light(id);
+    }
+    maybeStart();
+  });
+}
+
+const STATIC = { '/': ['speaker.html', 'text/html'], '/speaker.js': ['speaker.js', 'text/javascript'] };
+
+// Solo para la página de altavoz: el Host frena el «DNS rebinding» y la cabecera X-Altavoz, las órdenes de otras webs.
+// Por la wifi, además, solo atiende a los móviles que llegan así y al propio PC
+function trusted(req) {
+  const local = plain(req.socket.localAddress), remote = plain(req.socket.remoteAddress);
+  if (!lanServers.has(local)) return LOOPBACK.test(req.headers.host || '');
+  return (allowed.has(remote) || remote === local) && req.headers.host === `${local}:${PORT}`;
+}
+
+async function handle(req, res) {
+  const url = new URL(req.url, 'http://altavoz');
+  if (!trusted(req)) return reply(res, 403, 'text/plain', 'Prohibido');
+  try {
+    if (req.method === 'GET') {
+      if (Object.hasOwn(STATIC, url.pathname)) {
+        const [file, type] = STATIC[url.pathname];
+        return reply(res, 200, `${type}; charset=utf-8`, fs.readFileSync(path.join(PUBLIC, file)));
+      }
+      if (url.pathname === '/clock') return json(res, { t: now() });
+      if (url.pathname === '/events') return events(req, res, url.searchParams.get('id'));
+      if (url.pathname.startsWith('/song/')) return sendSong(res, decodeURIComponent(url.pathname.slice(6)));
+    }
+    if (req.method === 'POST' && req.headers['x-altavoz'] === '1') {
+      const body = await readJson(req);
+      if (url.pathname === '/status') return (report(body.id, body), json(res, {}));
+      if (url.pathname === '/control') return json(res, { warning: control(String(body.action), body) });
+    }
+    reply(res, 404, 'text/plain', 'No existe');
+  } catch (e) {
+    json(res, { error: e.message }, 400);
+  }
+}
+
+function start() {
+  const server = http.createServer(handle);
+  server.on('error', e => console.log(e.code === 'EADDRINUSE'
+    ? `  música: el puerto ${PORT} está ocupado, así que los altavoces no funcionarán` : `  música: ${e.message}`));
+  server.listen(PORT, '127.0.0.1');
+  // Los altavoces por la wifi que ya había vuelven a encontrar al PC tras reiniciar el panel
+  for (const room of Object.values(rooms)) {
+    const address = room.lan && pcAddress(room.lan);
+    if (!address) continue;
+    allowed.add(room.lan);
+    listenLan(address).catch(e => console.log(`  música: ${e.message}`));
+  }
+  setInterval(keepPorts, 20000).unref();
+}
+
+module.exports = { PORT, start, keepPorts, status, control, setRoom, open, upload, openFolder, wav };
