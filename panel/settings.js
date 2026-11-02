@@ -1,4 +1,4 @@
-// settings.js — los ajustes comunes a todos los móviles: modo oscuro, pantalla, animaciones y filtro de internet.
+// settings.js — los ajustes comunes a todos los móviles: modo oscuro, pantalla y animaciones.
 // El perfil que se elige en el panel se guarda en settings.json; lo que no está en el perfil no se toca.
 'use strict';
 const fs = require('node:fs');
@@ -6,7 +6,7 @@ const cfg = require('./config');
 const adb = require('./adb');
 
 const FILE = 'settings.json';
-const ANDROID = { 28: '9', 29: '10' }; // nivel de API mínimo → versión de Android que se le dice al usuario
+const ANDROID = { 29: '10' }; // nivel de API mínimo → versión de Android que se le dice al usuario
 const num = (v, fallback) => (v == null || v === '' || v === 'null' ? fallback : Number(v));
 const YES_NO = [['1', 'Sí'], ['0', 'No']];
 
@@ -27,8 +27,6 @@ const FONT = [['0.85', 'Pequeña'], ['1', 'Normal'], ['1.15', 'Grande'], ['1.3',
 const ANIMATIONS = [['1', 'Normales'], ['0.5', 'Rápidas'], ['0', 'Sin animaciones']];
 const ANIMATION_KEYS = ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale'];
 
-// Servidores de DNS privado (DNS sobre TLS) que filtran
-const DNS = { ads: 'dns.adguard-dns.com', family: 'family.adguard-dns.com', adult: 'family.cloudflare-dns.com' };
 
 // read: su valor a partir de adb.readSettings · write: las órdenes que lo cambian · other: cómo mostrar un valor fuera de la lista
 const SETTINGS = [
@@ -75,21 +73,6 @@ const SETTINGS = [
     other: v => `×${v}`,
     write: v => ANIMATION_KEYS.map(k => `settings put global ${k} ${v}`),
   },
-  {
-    key: 'dns', name: 'Filtro de internet', minSdk: 28,
-    options: [['auto', 'Sin filtro'], ['ads', 'Sin anuncios'], ['family', 'Familiar'], ['adult', 'Sin adultos']],
-    hint: 'DNS privado: filtra en todo el móvil, también dentro de las apps. «Sin anuncios» y «Familiar» (sin anuncios ni webs para adultos) usan AdGuard DNS; «Sin adultos», Cloudflare.',
-    read: s => {
-      const mode = s.global.private_dns_mode;
-      if (mode === 'off') return 'off';
-      if (mode !== 'hostname') return 'auto';
-      const host = s.global.private_dns_specifier || '';
-      return Object.keys(DNS).find(k => DNS[k] === host) || host;
-    },
-    other: v => (v === 'off' ? 'Desactivado' : v),
-    write: v => (v === 'auto' ? ['settings put global private_dns_mode opportunistic']
-      : [`settings put global private_dns_specifier ${DNS[v]}`, 'settings put global private_dns_mode hostname']),
-  },
 ];
 
 const byKey = new Map(SETTINGS.map(s => [s.key, s]));
@@ -99,15 +82,28 @@ const text = (s, v) => s.options.find(([o]) => o === v)?.[1] ?? (s.other ? s.oth
 // Lo que necesita la página: nombre, explicación, opciones y desde qué Android existe
 const definitions = () => SETTINGS.map(({ key, name, hint, minSdk, options }) => ({ key, name, hint, options, android: ANDROID[minSdk] }));
 
-function profile() {
-  let data = {};
+// settings.json: el perfil común ({ ajuste: valor }) y, en «moviles», lo que algún móvil tiene distinto
+// ({ número de serie: { ajuste: valor, o "" si en ese móvil no se toca } })
+function data() {
   try {
-    data = JSON.parse(fs.readFileSync(cfg.dataPath(FILE), 'utf8'));
+    return JSON.parse(fs.readFileSync(cfg.dataPath(FILE), 'utf8'));
   } catch (e) {
     if (e.code !== 'ENOENT') throw new Error(`${FILE} está dañado: ${e.message}`);
+    return {};
   }
-  return Object.fromEntries(Object.entries(data).filter(([k, v]) => valid(k, v)));
 }
+
+function profile() {
+  return Object.fromEntries(Object.entries(data()).filter(([k, v]) => valid(k, v)));
+}
+
+function exceptions() {
+  const own = data().moviles || {};
+  return Object.fromEntries(Object.entries(own).map(([serialno, values]) => [serialno,
+    Object.fromEntries(Object.entries(values || {}).filter(([k, v]) => byKey.has(k) && (v === '' || valid(k, v))))]));
+}
+
+const save = (p, own) => fs.writeFileSync(cfg.dataPath(FILE), `${JSON.stringify({ ...p, moviles: own }, null, 2)}\n`);
 
 // value vacío: el ajuste sale del perfil y deja de tocarse
 function setProfile(key, value) {
@@ -116,7 +112,26 @@ function setProfile(key, value) {
   const p = profile();
   if (value) p[key] = value;
   else delete p[key];
-  fs.writeFileSync(cfg.dataPath(FILE), `${JSON.stringify(p, null, 2)}\n`);
+  save(p, exceptions());
+}
+
+// Lo de un móvil: un valor propio, «» para no tocarlo en ese móvil, o null para que vuelva a ser como el perfil
+function setException(serialno, key, value) {
+  if (!byKey.has(key)) throw new Error('Ajuste desconocido');
+  if (value && !valid(key, value)) throw new Error('Valor no válido');
+  const own = exceptions();
+  const mine = own[serialno] || {};
+  if (value == null) delete mine[key];
+  else mine[key] = value;
+  if (Object.keys(mine).length) own[serialno] = mine;
+  else delete own[serialno];
+  save(profile(), own);
+}
+
+// Lo que tiene que tener ese móvil: el perfil con lo suyo encima (sin lo que en él no se toca)
+function target(serialno) {
+  const merged = { ...profile(), ...(exceptions()[serialno] || {}) };
+  return Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== ''));
 }
 
 // Los ajustes de un móvil: { clave: { value, text } }, o { na } si su Android no lo tiene
@@ -129,16 +144,16 @@ async function read(serial) {
   }));
 }
 
-// Cambia en el móvil lo que no coincide con el perfil (todo, o solo «key») y comprueba que lo ha aceptado
-async function apply(serial, key) {
-  const want = profile();
+// Cambia en el móvil lo que no coincide con lo que debe tener (todo, o solo «key») y comprueba que lo ha aceptado
+async function apply(serial, key, serialno) {
+  const want = target(serialno);
   const differs = values => SETTINGS.filter(d => (!key || d.key === key) && want[d.key] && !values[d.key].na && values[d.key].value !== want[d.key]);
   const todo = differs(await read(serial));
-  if (!todo.length) return 'Ya estaba como el perfil';
+  if (!todo.length) return 'Ya estaba así';
   await adb.writeSettings(serial, todo.flatMap(d => d.write(want[d.key])));
   const refused = differs(await read(serial));
   if (refused.length) throw new Error(`El móvil no ha aceptado: ${refused.map(d => d.name.toLowerCase()).join(', ')}`);
   return todo.length === 1 ? `${todo[0].name}: ${text(todo[0], want[todo[0].key])}` : `${todo.length} ajustes cambiados`;
 }
 
-module.exports = { definitions, profile, setProfile, read, apply };
+module.exports = { definitions, profile, exceptions, setProfile, setException, read, apply };

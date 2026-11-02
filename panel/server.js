@@ -10,6 +10,7 @@ const { pipeline } = require('node:stream/promises');
 const adb = require('./adb');
 const cfg = require('./config');
 const catalog = require('./catalog');
+const limpieza = require('./limpieza');
 const mirror = require('./mirror');
 const music = require('./music');
 const settings = require('./settings');
@@ -18,8 +19,6 @@ const sync = require('./sync');
 const { qrSvg } = require('./qr');
 
 const PORT = Number(process.env.PORT) || 8765;
-const HOST = process.env.HOST || '127.0.0.1';
-const LOCAL_ONLY = ['127.0.0.1', 'localhost', '::1'].includes(HOST);
 const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 const SERIAL = /^[\w.:-]+$/;
 const ADDR = /^[\w.-]+(:\d{1,5})?$/;
@@ -190,6 +189,23 @@ on('POST', '/api/catalog/add', async ({ body: { source, pkg, name } }) => {
   return { app: catalog.put({ pkg, source, name: String(name || '').trim() || info.name, icon: info.icon, ...version }) };
 });
 
+// Un APK desde un enlace: se descarga al PC y queda como APK propio, recordando el enlace (añadirlo otra vez lo actualiza)
+on('POST', '/api/catalog/url', async ({ body: { url, name } }) => {
+  const link = String(url || '').trim();
+  const tmp = path.join(os.tmpdir(), `panel-${process.pid}-${Date.now()}.apk`);
+  try {
+    await stores.downloadApk(link, tmp);
+    const file = decodeURIComponent(new URL(link).pathname.split('/').pop() || '').replace(/\.apk$/i, '').slice(0, 60);
+    try {
+      return { app: catalog.putApk(tmp, String(name || '').trim(), file, link) };
+    } catch (e) {
+      throw new HttpError(400, `Lo que hay en ese enlace no es una app de Android (¿es la página de descarga en vez del archivo .apk?): ${e.message}`);
+    }
+  } finally {
+    fs.rm(tmp, { force: true }, () => {});
+  }
+});
+
 on('POST', '/api/catalog/copy', async ({ body: { serial, pkg, name } }) => {
   need(SERIAL.test(serial || '') && adb.PKG.test(pkg || ''), 'Móvil o paquete no válido');
   const tmp = path.join(os.tmpdir(), `panel-${process.pid}-${Date.now()}.apk`);
@@ -229,7 +245,7 @@ on('GET', '/api/settings', async () => {
   await Promise.all(devices.map(async d => {
     try { d.settings = await settings.read(d.serial); } catch (e) { d.error = e.message; }
   }));
-  return { settings: settings.definitions(), profile: settings.profile(), devices };
+  return { settings: settings.definitions(), profile: settings.profile(), exceptions: settings.exceptions(), devices };
 });
 
 on('POST', '/api/settings/profile', ({ body: { key, value } }) => {
@@ -237,11 +253,20 @@ on('POST', '/api/settings/profile', ({ body: { key, value } }) => {
   return {};
 });
 
-// Sin serials: en todos los móviles; sin key: todos los ajustes del perfil
+// Un ajuste distinto en un móvil (por su número de serie): value «» es no tocarlo ahí, y null, como el perfil
+on('POST', '/api/settings/device', ({ body: { serialno, key, value } }) => {
+  need(SERIAL.test(serialno || ''), 'Móvil no válido');
+  try { settings.setException(serialno, key, value ?? null); } catch (e) { throw new HttpError(400, e.message); }
+  return {};
+});
+
+// Sin serials: en todos los móviles; sin key: todos los ajustes. Cada móvil, con lo suyo encima del perfil
 on('POST', '/api/settings/apply', async ({ body: { serials, key } }) => {
   need(!serials || (Array.isArray(serials) && serials.every(s => SERIAL.test(s))), 'Móvil no válido');
-  const targets = serials || (await readyDevices()).map(d => d.serial);
-  return { results: await Promise.all(targets.map(serial => settle(settings.apply(serial, key), { serial }))) };
+  const devices = await readyDevices();
+  const targets = serials || devices.map(d => d.serial);
+  const serialno = serial => devices.find(d => d.serial === serial)?.serialno;
+  return { results: await Promise.all(targets.map(serial => settle(settings.apply(serial, key, serialno(serial)), { serial }))) };
 });
 
 // ── Música: los altavoces son una página que el móvil abre en Chrome (music.js) ──
@@ -255,9 +280,9 @@ on('POST', '/api/music/open', async ({ body: { serial, id, again } }) => {
   return { message: await music.open(serial, id, Boolean(again)) };
 });
 
-on('POST', '/api/music/room', ({ body: { id, serial, on: enabled, delay } }) => {
+on('POST', '/api/music/room', ({ body: { id, serial, on: enabled, delay, screen } }) => {
   need(SERIAL.test(id || '') && (!serial || SERIAL.test(serial)), 'Móvil no válido');
-  music.setRoom(id, { serial, on: enabled, delay });
+  music.setRoom(id, { serial, on: enabled, delay, screen });
   return {};
 });
 
@@ -291,35 +316,29 @@ on('POST', '/api/names', ({ body: { id, name } }) => {
   return {};
 });
 
-// Las apps de terceros de cada móvil (para ver las que sobran) y lo que su lista de debloat quitaría
-on('GET', '/api/overview', async () => {
-  const lists = cfg.debloatLists();
+// ── Limpiar: todas las apps de cada móvil, para ver lo que sobra ──
+
+// apps: { paquete: [sistema, instalada, activada, imprescindible] }, en corto porque son cientos por móvil
+on('GET', '/api/cleanup', async () => {
   const devices = await readyDevices();
   await Promise.all(devices.map(async d => {
-    const vendor = (d.maker || '').toLowerCase();
-    d.third = [];
-    d.debloat = { file: `datos/debloat/${vendor}.txt`, exists: Object.hasOwn(lists, vendor), pkgs: [] };
     try {
-      const apps = await adb.apps(d.serial);
-      const installed = new Set(apps.filter(a => a.installed).map(a => a.pkg));
-      d.third = apps.filter(a => !a.system && a.installed).map(a => a.pkg);
-      d.debloat.pkgs = (lists[vendor] || []).filter(e => installed.has(e.value)).map(e => ({ pkg: e.value, note: e.note }));
-    } catch (e) { d.error = e.message; }
+      d.apps = Object.fromEntries((await adb.apps(d.serial)).map(a => [a.pkg,
+        [a.system ? 1 : 0, a.installed ? 1 : 0, a.enabled ? 1 : 0, limpieza.isProtected(a.pkg) ? 1 : 0]]));
+    } catch (e) {
+      d.apps = {};
+      d.error = e.message;
+    }
   }));
-  return { devices, keep: catalog.load().apps.map(a => ({ pkg: a.pkg, note: a.name })) };
+  return { devices, favorites: catalog.load().apps.map(a => a.pkg), suggested: limpieza.SUGGESTED, ...limpieza.load() };
 });
 
-// El APK llega tal cual en el cuerpo de la petición y se instala en paralelo en los móviles elegidos
-on('POST', '/api/install', async ({ req, url }) => {
-  const serials = (url.searchParams.get('serials') || '').split(',').filter(Boolean);
-  need(serials.length && serials.every(s => SERIAL.test(s)), 'Elige al menos un móvil');
-  const file = path.join(os.tmpdir(), `panel-${process.pid}-${Date.now()}.apk`);
-  try {
-    await pipeline(req, fs.createWriteStream(file));
-    return { results: await Promise.all(serials.map(serial => settle(adb.install(serial, file), { serial }))) };
-  } finally {
-    fs.rm(file, { force: true }, () => {});
-  }
+on('POST', '/api/cleanup/mark', ({ body: { pkg, mark } }) => (limpieza.setMark(pkg, mark || ''), {}));
+
+// Nombre e icono de las apps que se están enseñando
+on('POST', '/api/appnames', async ({ body: { pkgs } }) => {
+  need(Array.isArray(pkgs) && pkgs.length <= 400 && pkgs.every(p => adb.PKG.test(p)), 'Paquetes no válidos');
+  return { names: await stores.names(pkgs) };
 });
 
 async function readJson(req) {
@@ -336,11 +355,9 @@ async function readJson(req) {
 }
 
 async function handleApi(req, url) {
-  // Solo responde a su propia página: comprobar el Host frena el «DNS rebinding», y la cabecera
-  // X-Panel impide que cualquier otra web abierta en el navegador mande órdenes a los móviles
-  if ((LOCAL_ONLY && !LOOPBACK.test(req.headers.host || '')) || req.headers['x-panel'] !== '1') {
-    throw new HttpError(403, 'Prohibido');
-  }
+  // Solo responde a su propia página: la cabecera X-Panel impide que cualquier otra web abierta en el navegador mande
+  // órdenes a los móviles (quién puede llegar, y con qué nombre, lo decide allowed)
+  if (req.headers['x-panel'] !== '1') throw new HttpError(403, 'Prohibido');
   for (const r of routes) {
     const m = r.method === req.method && url.pathname.match(r.re);
     if (!m) continue;
@@ -377,7 +394,75 @@ function openBrowser(url) {
   spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true }).on('error', () => {}).unref();
 }
 
-const server = http.createServer(async (req, res) => {
+// ── Desde otros dispositivos de casa ──
+// El panel escucha siempre en este PC (127.0.0.1). Con «red» encendido (se guarda en panel.json), además en las IP
+// privadas del PC, y solo atiende a direcciones de la red de casa: aunque alguien abriera el puerto en el router, a
+// internet no le contesta. No pide contraseña: cualquiera conectado a la misma red puede usarlo
+const PRIVATE_IP = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|127\.|::1$|f[cd][0-9a-f]{2}:|fe80:)/i;
+// Por la red se tiene que llegar con una IP o con el nombre del PC: así una web de fuera no puede hacerse pasar por la
+// página del panel cambiando a qué IP apunta su nombre («DNS rebinding»)
+const LAN_HOST = new RegExp(`^(\\d{1,3}(\\.\\d{1,3}){3}|\\[[0-9a-f:]+\\]|localhost|${os.hostname().replace(/[^\w-]/g, '')}`
+  + '(\\.(local|lan|home|localdomain|home\\.arpa))?)(:\\d+)?$', 'i');
+const NETWORK = 'panel.json';
+const plainIp = ip => String(ip || '').replace(/^::ffff:/, '');
+
+let lanOn = false;
+try { lanOn = JSON.parse(fs.readFileSync(cfg.dataPath(NETWORK), 'utf8')).red === true; } catch {}
+const lanServers = new Map(); // IP del PC → el servidor que escucha en ella
+
+// Las IPv4 privadas que tiene ahora el PC (no las de enlace local, 169.254, que no sirven para llegar desde otro aparato).
+// Las de las tarjetas virtuales (VirtualBox, Hyper-V y WSL, VMware, Docker) también, pero se marcan: desde otro aparato
+// de casa no se llega por ellas, así que no se enseñan. Se reconocen por el fabricante de su MAC o por el nombre
+const VIRTUAL_MAC = /^(0a:00:27|08:00:27|00:15:5d|00:50:56|00:0c:29|00:05:69|00:1c:14|02:42)/i;
+const VIRTUAL_NAME = /virtual|vethernet|vmware|vbox|hyper-v|wsl|docker/i;
+const privateIps = () => Object.entries(os.networkInterfaces()).flatMap(([name, list]) => list
+  .filter(i => i.family === 'IPv4' && !i.internal && PRIVATE_IP.test(i.address) && !i.address.startsWith('169.254.'))
+  .map(i => ({ address: i.address, virtual: VIRTUAL_MAC.test(i.mac) || VIRTUAL_NAME.test(name) })));
+
+// Escucha en las IP privadas del PC (se mira cada minuto: cambian si cambia de red), o en ninguna si está apagado
+function updateLan() {
+  const want = new Set(lanOn ? privateIps().map(i => i.address) : []);
+  for (const [ip, s] of lanServers) {
+    if (want.has(ip)) continue;
+    s.close();
+    lanServers.delete(ip);
+  }
+  for (const ip of want) {
+    if (lanServers.has(ip)) continue;
+    const s = http.createServer(handle);
+    s.on('error', e => {
+      console.log(`  red: no puedo escuchar en ${ip}: ${e.message}`);
+      lanServers.delete(ip);
+    });
+    s.listen(PORT, ip);
+    lanServers.set(ip, s);
+  }
+}
+
+// Las direcciones para abrirlo desde otro aparato: las de las tarjetas reales (si solo hay virtuales, todas)
+function lanStatus() {
+  const listening = privateIps().filter(i => lanServers.has(i.address));
+  const real = listening.filter(i => !i.virtual);
+  return { on: lanOn, urls: (real.length ? real : listening).map(i => `http://${i.address}:${PORT}`) };
+}
+
+on('GET', '/api/red', () => lanStatus());
+on('POST', '/api/red', ({ body: { on: enabled } }) => {
+  lanOn = Boolean(enabled);
+  fs.writeFileSync(cfg.dataPath(NETWORK), `${JSON.stringify({ red: lanOn }, null, 2)}\n`);
+  updateLan();
+  return lanStatus();
+});
+
+// Por este PC, solo con su nombre (localhost); por la red, solo desde una dirección de casa y con una IP o el nombre del PC
+function allowed(req) {
+  const local = plainIp(req.socket.localAddress), host = req.headers.host || '';
+  if (local.startsWith('127.') || local === '::1') return LOOPBACK.test(host);
+  return lanOn && PRIVATE_IP.test(plainIp(req.socket.remoteAddress)) && LAN_HOST.test(host);
+}
+
+async function handle(req, res) {
+  if (!allowed(req)) return send(res, 403, { error: 'Prohibido' });
   const url = new URL(req.url, 'http://panel');
   if (!url.pathname.startsWith('/api/')) return serveStatic(url.pathname, res);
   try {
@@ -385,7 +470,9 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     send(res, e.status || 500, { error: e.message });
   }
-});
+}
+
+const server = http.createServer(handle);
 
 // Si ya estaba abierto (por ejemplo, porque arranca solo con Windows), panel.cmd solo lo abre en el navegador
 server.on('error', e => {
@@ -399,11 +486,13 @@ server.on('error', e => {
   process.exit(1);
 });
 
-server.listen(PORT, HOST, async () => {
+server.listen(PORT, '127.0.0.1', async () => {
   const url = `http://localhost:${PORT}`;
   console.log(`Panel en ${url}  (Ctrl+C para pararlo)`);
   music.start();
-  if (!LOCAL_ONLY) console.log(`Abierto a la red en ${HOST}: cualquiera en tu wifi puede gestionar los móviles.`);
+  updateLan();
+  setInterval(updateLan, 60000).unref();
+  if (lanOn) console.log(`Desde otros dispositivos de casa: ${lanStatus().urls.join(' o ')}`);
   if (!adb.adbPath()) console.log('Aviso: no encuentro adb; el panel explica cómo instalarlo.');
   if (process.argv.includes('--open')) openBrowser(url);
   await adb.startServer();

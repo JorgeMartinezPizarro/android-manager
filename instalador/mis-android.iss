@@ -22,7 +22,7 @@ DisableProgramGroupPage=yes
 DisableDirPage=auto
 ShowLanguageDialog=no
 WizardStyle=modern
-SetupIconFile=salida\mis-android.ico
+SetupIconFile=vendor\mis-android.ico
 UninstallDisplayIcon={app}\mis-android.ico
 UninstallDisplayName=Mis Android
 OutputDir=salida
@@ -44,8 +44,8 @@ Source: "..\panel.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\parar-panel.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\package.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "salida\mis-android.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "vendor\*"; DestDir: "{app}\vendor"; Flags: recursesubdirs ignoreversion
+Source: "vendor\mis-android.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "vendor\*"; DestDir: "{app}\vendor"; Excludes: "mis-android.ico"; Flags: recursesubdirs ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Mis Android"; Filename: "{app}\panel.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\mis-android.ico"; Comment: "Los móviles de casa: apps, ajustes y música"

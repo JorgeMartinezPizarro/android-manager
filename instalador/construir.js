@@ -79,8 +79,10 @@ function iscc() {
 async function main() {
   await provide('node', NODE, (data, dir) => fs.writeFileSync(path.join(dir, 'node.exe'), data));
   await provide('scrcpy', SCRCPY, unzipFlat);
+  // El icono va dentro del .exe (y lo copia al instalar, para los accesos directos): en salida solo queda el instalador
+  fs.writeFileSync(path.join(VENDOR, 'mis-android.ico'), ico());
   fs.mkdirSync(SALIDA, { recursive: true });
-  fs.writeFileSync(path.join(SALIDA, 'mis-android.ico'), ico());
+  fs.rmSync(path.join(SALIDA, 'mis-android.ico'), { force: true });
   // La versión es la fecha: 2026.11.2, y para Windows con la hora detrás (2026.11.2.1530)
   const d = new Date(), version = `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
   execFileSync(iscc(), ['/Qp', `/DVersion=${version}`, `/DVersionInfo=${version}.${d.getHours() * 100 + d.getMinutes()}`,

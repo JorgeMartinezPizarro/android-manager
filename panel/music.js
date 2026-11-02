@@ -87,13 +87,13 @@ const rooms = saved.rooms || {};
 const prefs = { shuffle: Boolean(saved.shuffle) };
 const saveRooms = () => fs.writeFileSync(ROOMS, JSON.stringify({ rooms, ...prefs }, null, 2) + '\n');
 
-// Las páginas de altavoz abiertas: su conexión de avisos y lo último que han contado de sí mismas. active: ya ha sonado
-// alguna vez, así que si vuelve a pedir un toque (se ha recargado) el panel se lo da; taps: toques seguidos sin éxito
+// Las páginas de altavoz abiertas: su conexión de avisos y lo último que han contado de sí mismas. page: la hora a la que
+// se cargó la pestaña que hace de altavoz; si Chrome abre otra, cuenta solo la más nueva. active: ya ha sonado alguna vez, así que si vuelve a pedir un toque (se ha recargado) el panel se lo da; taps: toques seguidos sin éxito
 const speakers = new Map();
 function speaker(id) {
   if (!speakers.has(id)) {
     speakers.set(id, {
-      clients: new Set(), status: {}, openedAt: 0, tapUntil: 0, tapping: false, taps: 0, active: false, tapError: '',
+      clients: new Set(), page: 0, status: {}, openedAt: 0, tapUntil: 0, tapping: false, taps: 0, active: false, tapError: '',
       rest: false, lighting: false, lightError: '',
     });
   }
@@ -108,8 +108,9 @@ const linked = sp => sp.clients.size > 0;
 // ── Lo que suena ──
 
 // startAt: la hora del PC a la que suena el principio de la canción; null mientras se espera a los altavoces.
-// stopAt: la hora (Date.now) a la que se pausa sola, si se ha puesto el temporizador
-const st = { song: null, playing: false, startAt: null, position: 0, since: 0, stopAt: null };
+// stopAt: la hora (Date.now) a la que se pausa sola, si se ha puesto el temporizador. next: la que sonará después, que
+// los altavoces van cargando de antemano para no hacer pausa entre canciones
+const st = { song: null, playing: false, startAt: null, position: 0, since: 0, stopAt: null, next: null };
 const durations = new Map();
 let endTimer = null, waitTimer = null, sleepTimer = null;
 
@@ -119,9 +120,9 @@ function view(id, list = songs(), v = pageVersion()) {
   const room = rooms[id] || {};
   return {
     song: st.song, title: st.song && nameOf(st.song), duration: (st.song && durations.get(st.song)) || null,
-    playing: st.playing, startAt: st.startAt, position: st.position,
+    playing: st.playing, startAt: st.startAt, position: st.position, next: st.next,
     stopAt: st.stopAt, on: Boolean(room.on), delay: room.delay || 0, room: cfg.names().get(id) || '',
-    songs: list.map(s => [s.id, s.name]), v,
+    screen: room.screen !== false, songs: list.map(s => [s.id, s.name]), v,
   };
 }
 
@@ -174,9 +175,24 @@ function warning() {
 }
 
 function play(song) {
-  if (song !== TEST && !songs().some(s => s.id === song)) throw new Error('Esa canción ya no está en la carpeta de música');
-  Object.assign(st, { song, playing: true, position: 0 });
+  const list = songs();
+  if (song !== TEST && !list.some(s => s.id === song)) throw new Error('Esa canción ya no está en la carpeta de música');
+  Object.assign(st, { song, playing: true, position: 0, next: upcoming(song, list) });
   startWhenReady();
+}
+
+// La que sigue a esa: en orden, la de después (tras la última, la primera); en aleatorio, cualquier otra, y si ya había
+// una elegida (y cargada en los altavoces) se mantiene. La prueba de sincronía no sigue con nada
+function upcoming(song, list = songs()) {
+  if (song === TEST || !list.length) return null;
+  if (prefs.shuffle) {
+    if (st.next && st.next !== song && list.some(s => s.id === st.next)) return st.next;
+    const others = list.filter(s => s.id !== song);
+    return others.length ? others[Math.floor(Math.random() * others.length)].id : null;
+  }
+  const i = list.findIndex(s => s.id === song);
+  const next = list[(i + 1) % list.length].id;
+  return next === song ? null : next;
 }
 
 function pause() {
@@ -188,12 +204,13 @@ function pause() {
 function resume() {
   if (st.playing) return;
   if (!st.song) return skip(1);
+  st.next = upcoming(st.song);
   st.playing = true;
   startWhenReady();
 }
 
 function stop() {
-  Object.assign(st, { song: null, playing: false, startAt: null, position: 0 });
+  Object.assign(st, { song: null, playing: false, startAt: null, position: 0, next: null });
   broadcast();
 }
 
@@ -202,6 +219,7 @@ function skip(step) {
   const list = songs();
   if (!list.length) throw new Error('No hay canciones: copia alguna a la carpeta de música');
   if (step < 0 && st.song && position() > 5) return seek(0);
+  if (step > 0 && st.next && st.next !== st.song && list.some(s => s.id === st.next)) return play(st.next);
   const i = list.findIndex(s => s.id === st.song);
   if (step > 0 && prefs.shuffle && list.length > 1) {
     const others = list.filter((_, j) => j !== i);
@@ -228,8 +246,9 @@ function solo(id) {
   maybeStart();
 }
 
-function unmuteAll() {
-  for (const room of Object.values(rooms)) room.on = true;
+// Que suenen todos (on) o silenciarlos todos
+function setAll(on) {
+  for (const room of Object.values(rooms)) room.on = on;
   saveRooms();
   broadcast();
   maybeStart();
@@ -254,8 +273,15 @@ const CONTROL = {
   seek: ({ position: p }) => seek(p),
   here: ({ id, on }) => setRoom(id, { on }),
   solo: ({ id }) => solo(id),
-  all: unmuteAll,
-  shuffle: ({ on }) => { prefs.shuffle = Boolean(on); saveRooms(); },
+  all: () => setAll(true),
+  none: () => setAll(false),
+  shuffle: ({ on }) => {
+    prefs.shuffle = Boolean(on);
+    saveRooms();
+    st.next = null;
+    st.next = st.song && upcoming(st.song);
+    broadcast();
+  },
   sleep: ({ minutes }) => sleep(minutes),
 };
 
@@ -265,12 +291,18 @@ function control(action, body = {}) {
   return ['play', 'toggle', 'next', 'previous'].includes(action) && st.playing ? warning() : '';
 }
 
-function setRoom(id, { on, delay, serial } = {}) {
+// screen: false es un altavoz sin pantalla (solo suena, con la pantalla apagada); al volver a true se le enciende y se
+// le quita la pantalla de bloqueo, para que se vea la página
+function setRoom(id, { on, delay, serial, screen } = {}) {
   if (!ID.test(id || '')) throw new Error('Móvil no válido');
   const room = rooms[id] ||= { on: true, delay: 0 };
   if (on !== undefined) room.on = Boolean(on);
   if (delay !== undefined) room.delay = Math.max(-1000, Math.min(1000, Math.round(Number(delay) || 0)));
   if (serial) room.serial = serial;
+  if (screen !== undefined) {
+    room.screen = Boolean(screen);
+    if (room.screen && room.serial) adb.quick(room.serial, 'unlock').catch(() => {});
+  }
   saveRooms();
   broadcast();
   maybeStart();
@@ -369,6 +401,7 @@ async function viaWifi(serial) {
 function report(id, s) {
   if (!ID.test(id || '')) throw new Error('Móvil no válido');
   const sp = speaker(id);
+  if ((Number(s.page) || 0) < sp.page) return; // una pestaña vieja: no cuenta
   const song = typeof s.song === 'string' ? s.song : null;
   sp.status = {
     phase: String(s.phase || ''), song, error: String(s.error || '').slice(0, 200),
@@ -388,6 +421,8 @@ function report(id, s) {
       .finally(() => { sp.tapping = false; });
   }
   if (sp.status.phase && sp.status.phase !== 'tap') Object.assign(sp, { active: true, taps: 0, tapUntil: 0, tapError: '' });
+  sp.reportedAt = Date.now();
+  sp.visible = s.visible !== false;
   if (typeof s.rest === 'boolean') {
     sp.rest = s.rest;
     light(id);
@@ -398,13 +433,20 @@ function report(id, s) {
 
 // Mientras la página descansa, el brillo del móvil al mínimo; al tocarla, como estaba. Lo que había se guarda en music.json
 // (room.light) por si el panel se cierra con la pantalla baja. Si cambia de idea a medias, el bucle lo deja como pida al final
+// Un altavoz sin pantalla no se atenúa: al descansar se le apaga la pantalla (como mucho una vez cada 30 s), y si venía
+// atenuado de antes se le devuelve el brillo
 async function light(id) {
   const sp = speaker(id), room = rooms[id];
   if (!room?.serial || sp.lighting) return;
   sp.lighting = true;
+  const dim = () => sp.rest && room.screen !== false;
   try {
-    while (sp.rest !== Boolean(room.light)) {
-      if (sp.rest) {
+    if (sp.rest && room.screen === false && Date.now() - (sp.offAt || 0) > 30000) {
+      sp.offAt = Date.now();
+      await adb.quick(room.serial, 'lock');
+    }
+    while (dim() !== Boolean(room.light)) {
+      if (dim()) {
         room.light = await adb.brightness(room.serial);
         saveRooms();
         await adb.setBrightness(room.serial, await adb.darkest(room.serial, room.light));
@@ -419,6 +461,42 @@ async function light(id) {
     sp.lightError = `No he podido cambiar el brillo: ${e.message}`;
   } finally {
     sp.lighting = false;
+  }
+}
+
+// Los altavoces sin pantalla, vigilados cada 15 s:
+// - Android puede dormir Chrome si se queda mucho rato sin sonar. Si la música suena y uno sigue conectado pero lleva un
+//   rato sin dar señales, o si espera un toque (recién recargada), se le enciende la pantalla y se quita la de bloqueo
+//   (como mucho cada 2 minutos): la página despierta, el panel le da el toque si hace falta, vuelve a sonar y a los 15 s
+//   descansa y se le apaga otra vez
+// - Si la pantalla se enciende con la página detrás (la de bloqueo al tocarlo o al empezar a cargar, otra app…), la página
+//   no puede descansar: si sigue encendida a la segunda vuelta (30 s), se apaga
+let watching = false;
+async function watchHeadless() {
+  if (watching) return;
+  watching = true;
+  try {
+    for (const [id, room] of Object.entries(rooms)) {
+      const sp = speakers.get(id);
+      if (room.screen !== false || !room.serial || !sp) continue;
+      if (st.playing && room.on && linked(sp) && (Date.now() - (sp.reportedAt || 0) > 45000 || sp.status.phase === 'tap')
+        && Date.now() - (sp.wokenAt || 0) > 120000) {
+        sp.wokenAt = Date.now();
+        adb.quick(room.serial, 'unlock').catch(() => {});
+        continue;
+      }
+      // Delante y sin descansar: alguien la está usando, y descansará ella sola
+      if (linked(sp) && sp.visible && !sp.rest) {
+        sp.awakeTicks = 0;
+        continue;
+      }
+      sp.awakeTicks = (await adb.awake(room.serial).catch(() => false)) ? (sp.awakeTicks || 0) + 1 : 0;
+      if (sp.awakeTicks < 2) continue;
+      sp.awakeTicks = 0;
+      adb.quick(room.serial, 'lock').catch(() => {});
+    }
+  } finally {
+    watching = false;
   }
 }
 
@@ -438,6 +516,7 @@ function status() {
     now: {
       song: st.song, name: st.song && nameOf(st.song), playing: st.playing, waiting: st.playing && st.startAt == null,
       position: position(), duration: durations.get(st.song) || null, stopAt: st.stopAt, shuffle: prefs.shuffle,
+      next: st.next && nameOf(st.next),
     },
     rooms: Object.fromEntries(Object.entries(rooms).map(([id, room]) => {
       const sp = speaker(id);
@@ -446,7 +525,7 @@ function status() {
         && 'Chrome no ha abierto la página: mira el móvil. Si tiene PIN, desbloquéalo; la primera vez, Chrome puede pedir que aceptes algo';
       const error = sp.tapError || sp.lightError || late;
       return [id, {
-        on: Boolean(room.on), delay: room.delay || 0, lan: Boolean(room.lan), linked: linked(sp),
+        on: Boolean(room.on), delay: room.delay || 0, lan: Boolean(room.lan), linked: linked(sp), screen: room.screen !== false,
         ...(linked(sp) ? sp.status : {}), ...(error ? { error } : {}),
       }];
     })),
@@ -511,14 +590,21 @@ function events(req, res, id) {
   if (!ID.test(id || '')) return reply(res, 400, 'text/plain', 'Falta el móvil');
   if (!rooms[id]) remember(id); // una página abierta a mano también es un altavoz
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
-  res.write(`retry: 3000\ndata: ${JSON.stringify(view(id))}\n\n`);
+  const ping = setInterval(() => res.write(': ping\n\n'), 15000);
+  req.on('close', () => clearInterval(ping));
+  // Cada móvil, una sola pestaña de altavoz: la más nueva. A las demás se les dice que paren (y siguen conectadas, para
+  // que no vuelvan a llamar); las de antes de este cambio no mandan su hora y pierden ante cualquiera que sí la mande
   const sp = speaker(id);
+  const page = Number(new URL(req.url, 'http://x').searchParams.get('p')) || 0;
+  if (page < sp.page) return res.write('retry: 3000\nevent: replaced\ndata: {}\n\n');
+  sp.page = page;
+  for (const old of sp.clients) old.write('event: replaced\ndata: {}\n\n');
+  sp.clients.clear();
+  res.write(`retry: 3000\ndata: ${JSON.stringify(view(id))}\n\n`);
   sp.clients.add(res);
   sp.openedAt = 0; // ya llegó: si luego se va, no es que no se abriera
-  const ping = setInterval(() => res.write(': ping\n\n'), 15000);
   req.on('close', () => {
-    clearInterval(ping);
-    sp.clients.delete(res);
+    if (!sp.clients.delete(res)) return; // una pestaña vieja que se cierra
     if (!linked(sp)) {
       sp.status = {};
       sp.rest = false; // si la página se va, que el móvil no se quede con la pantalla a oscuras
@@ -576,6 +662,7 @@ function start() {
     listenLan(address).catch(e => console.log(`  música: ${e.message}`));
   }
   setInterval(keepPorts, 20000).unref();
+  setInterval(watchHeadless, 15000).unref();
 }
 
 module.exports = { PORT, start, keepPorts, status, control, setRoom, open, upload, openFolder, wav };

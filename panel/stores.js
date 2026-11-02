@@ -5,6 +5,7 @@ const path = require('node:path');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { readApkInfo } = require('./apkinfo');
+const cfg = require('./config');
 
 const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Mis Android)', 'Accept-Language': 'es' };
 const get = (url, ms = 20000) => fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(ms) });
@@ -81,4 +82,46 @@ async function fdroidApk(dir, pkg, versionCode) {
   return file;
 }
 
-module.exports = { packageFrom, details, fdroidLatest, fdroidApk };
+// Un APK desde cualquier enlace http o https (una release de GitHub, la web de un proyecto…), como mucho 500 MB.
+// Que de verdad sea una app lo comprueba quien lo guarda, al leerlo
+const MAX_APK = 500e6;
+async function downloadApk(link, file) {
+  let url;
+  try { url = new URL(link); } catch { url = null; }
+  if (!url || !['http:', 'https:'].includes(url.protocol)) throw new Error('Pega un enlace que empiece por http:// o https://');
+  const r = await get(url.href, 15 * 60_000).catch(e => {
+    throw new Error(`No se ha podido descargar de ${url.host}: ${e.cause?.code || e.cause?.message || e.message}`);
+  });
+  if (!r.ok) throw new Error(`No se ha podido descargar (${r.status})`);
+  if (Number(r.headers.get('content-length')) > MAX_APK) throw new Error('Pesa demasiado para ser una app');
+  await pipeline(Readable.fromWeb(r.body), fs.createWriteStream(file));
+  if (fs.statSync(file).size > MAX_APK) throw new Error('Pesa demasiado para ser una app');
+}
+
+// Nombre e icono de varias apps, de Google Play, para enseñarlas por su nombre y no por el paquete. Se guardan en
+// nombres-apps.json, también las que no están en Play (null), para no volver a preguntar; si Play no contesta, se pregunta
+// la próxima vez. Como mucho 40 nuevas por llamada, de 4 en 4
+const NAMES = 'nombres-apps.json';
+let known = null;
+async function names(pkgs) {
+  if (!known) {
+    try { known = JSON.parse(fs.readFileSync(cfg.dataPath(NAMES), 'utf8')); } catch { known = {}; }
+  }
+  const missing = [...new Set(pkgs)].filter(p => !(p in known)).slice(0, 40);
+  let next = 0;
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (next < missing.length) {
+      const pkg = missing[next++];
+      try {
+        const info = await details('play', pkg);
+        if (info.name) known[pkg] = { name: info.name, icon: info.icon };
+      } catch (e) {
+        if (/no está en/.test(e.message)) known[pkg] = null;
+      }
+    }
+  }));
+  if (missing.length) fs.writeFileSync(cfg.dataPath(NAMES), JSON.stringify(known));
+  return Object.fromEntries(pkgs.filter(p => known[p]).map(p => [p, known[p]]));
+}
+
+module.exports = { packageFrom, details, fdroidLatest, fdroidApk, downloadApk, names };

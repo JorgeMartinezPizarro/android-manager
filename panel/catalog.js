@@ -48,6 +48,7 @@ function put(entry) {
     icon: entry.icon || old.icon,
     versionCode: entry.source === 'play' ? undefined : entry.versionCode,
     versionName: entry.source === 'play' ? undefined : entry.versionName,
+    url: entry.url, // de dónde se descargó el APK, si vino de un enlace
     skip: old.skip,
   };
   if (old.source === 'apk' && app.source !== 'apk') fs.rmSync(apkFile(app.pkg), { force: true });
@@ -56,12 +57,12 @@ function put(entry) {
   return app;
 }
 
-// Guarda un APK (subido o copiado de un móvil) como origen de su app
-function putApk(file, name, fallbackName) {
+// Guarda un APK (subido, copiado de un móvil o descargado de un enlace) como origen de su app
+function putApk(file, name, fallbackName, url) {
   const info = readApkInfo(file);
   fs.mkdirSync(path.dirname(apkFile(info.pkg)), { recursive: true });
   fs.copyFileSync(file, apkFile(info.pkg));
-  return put({ ...info, name, fallbackName, source: 'apk' });
+  return put({ ...info, name, fallbackName, url, source: 'apk' });
 }
 
 function rename(pkg, name) {

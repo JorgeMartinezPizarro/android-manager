@@ -91,14 +91,13 @@ function route() {
   const id = ++renderId;
   const current = () => id === renderId;
   const hash = location.hash || '#/';
-  const tab = ['apps', 'music', 'settings', 'install'].find(t => hash.startsWith(`#/${t}`)) || 'devices';
+  const tab = ['apps', 'music', 'settings'].find(t => hash.startsWith(`#/${t}`)) || 'devices';
   for (const a of document.querySelectorAll('nav a')) a.classList.toggle('active', a.dataset.tab === tab);
   const m = hash.match(/^#\/device\/(.+)$/);
   const show = m ? viewDevice(decodeURIComponent(m[1]), current)
-    : tab === 'apps' ? viewOverview(current)
+    : tab === 'apps' ? viewOverview(current, hash.startsWith('#/apps/limpiar') ? 'limpiar' : 'favoritas')
     : tab === 'music' ? viewMusic(current)
     : tab === 'settings' ? viewSettings(current)
-    : tab === 'install' ? viewInstall(current)
     : viewDevices(current);
   show.catch(e => current() && (view.innerHTML = `<div class="card problem">${esc(e.message)}</div>`));
 }
@@ -154,10 +153,21 @@ async function viewDevices(current) {
         <p>En el móvil: Ajustes → Información del teléfono → toca 7 veces «Número de compilación» (en Xiaomi, «Versión de MIUI» o «de HyperOS»).
           Aparecen en Ajustes → Sistema (o Ajustes adicionales). Ahí están la depuración USB y la inalámbrica.</p>
       </details>
-    </section>`;
+    </section>
+    <section class="card lan" id="lan"></section>`;
   state.reload = () => loadGrid(current);
+  api('/red').then(s => { if (current() && $('#lan')) $('#lan').innerHTML = lanHtml(s); }).catch(() => {});
   await loadGrid(current);
 }
+
+// El panel desde otro móvil, tablet u ordenador de la misma red; con las direcciones para abrirlo, si está encendido
+const lanHtml = ({ on, urls }) => `
+  <label class="switch"><input type="checkbox" data-act="lan" ${on ? 'checked' : ''}><span class="knob"></span>Abrir el panel desde otros dispositivos de casa</label>
+  <p class="muted">${on && urls.length
+    ? `Desde el móvil, la tablet u otro ordenador conectados a tu red, abre ${urls.map(u => `<a href="${esc(u)}">${esc(u)}</a>`).join(' o ')}.`
+    : 'Para usarlo desde el móvil, la tablet u otro ordenador conectados a la misma red que este PC.'}
+    Solo dentro de casa: desde internet no contesta. No pide contraseña, así que cualquiera conectado a tu red podría usarlo.
+    «Ver pantalla» abre la pantalla del móvil en este PC.</p>`;
 
 async function loadGrid(current = () => true) {
   const { devices, saved } = await api('/devices');
@@ -195,11 +205,11 @@ function deviceCard(d) {
     </div>
     ${problem ? `<p class="problem">${esc(problem)}</p>` : ''}
     <div class="actions">
-      ${ready ? `<a class="btn primary" href="#/device/${enc(d.serial)}" title="Acciones rápidas y sus apps">Controlar</a>` : ''}
-      ${ready ? '<button class="btn" data-act="screen" title="Ver y manejar su pantalla desde el PC">Ver pantalla</button>' : ''}
-      ${ready && !d.wifi ? '<button class="btn" data-act="wifi">Pasar a Wi-Fi</button>' : ''}
+      ${ready ? `<a class="btn primary" href="#/device/${enc(d.serial)}" title="Acciones rápidas y sus apps">${ICON.control}Controlar</a>` : ''}
+      ${ready ? iconBtn('screen', ICON.look, 'Ver pantalla: verla y manejarla desde el PC') : ''}
+      ${ready && !d.wifi ? iconBtn('wifi', ICON.wifi, 'Pasar a Wi-Fi: seguir conectado sin el cable') : ''}
       ${retry ? '<button class="btn primary" data-act="reconnect">Reintentar</button>' : ''}
-      ${d.wifi ? '<button class="btn ghost" data-act="disconnect">Desconectar</button>' : ''}
+      ${d.wifi ? iconBtn('disconnect', ICON.unplug, 'Desconectar', 'ghost end') : ''}
     </div>
   </article>`;
 }
@@ -381,7 +391,7 @@ function appRow(a) {
 }
 
 const starButton = (pkg, on) => `<button class="star ${on ? 'on' : ''}" data-act="keep" aria-pressed="${on}"
-  title="${on ? 'App común. Pulsa para quitarla de la lista' : 'Hacerla app común: se instalará en todos los móviles'}">★</button>`;
+  title="${on ? 'Favorita. Pulsa para quitarla de favoritas' : 'Hacerla favorita: se instalará en todos los móviles'}">★</button>`;
 
 async function appAction(btn) {
   const serial = ctx(btn, 'serial'), pkg = ctx(btn, 'pkg'), action = btn.dataset.action;
@@ -403,11 +413,11 @@ async function appAction(btn) {
   });
 }
 
-// La estrella hace común una app (eligiendo de dónde instalarla) o la quita de la lista
+// La estrella hace favorita una app (eligiendo de dónde instalarla) o la quita de favoritas
 async function toggleKeep(btn) {
   const pkg = ctx(btn, 'pkg');
   if (!btn.classList.contains('on')) {
-    const serial = ctx(btn, 'serial') || state.overview?.devices.find(d => d.third.includes(pkg))?.serial;
+    const serial = ctx(btn, 'serial') || state.cleanup?.devices.find(d => d.apps[pkg]?.[1])?.serial;
     return addAppDialog({ pkg, serial });
   }
   try {
@@ -415,7 +425,7 @@ async function toggleKeep(btn) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-// ── Apps comunes ────────────────────────────────────────────────────────────
+// ── Apps: las favoritas y lo que sobra ──────────────────────────────────────
 
 const SOURCES = { apk: 'APK propio', fdroid: 'F-Droid', play: 'Google Play' };
 const time = ts => new Date(ts).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
@@ -424,12 +434,23 @@ const appIcon = a => (a.icon
   ? `<img class="app-icon" src="${esc(a.icon)}" alt="">`
   : `<span class="app-icon letter" style="--hue:${hue(a.pkg)}">${esc((a.name || a.pkg)[0].toUpperCase())}</span>`);
 
-async function viewOverview(current) {
+// Dos pestañas: Favoritas, las apps que quieres y en qué móviles, y Limpiar, todo lo demás. La que se ve va en la dirección
+// (#/apps o #/apps/limpiar), sin volver a cargar la página al cambiar
+async function viewOverview(current, tab) {
   view.innerHTML = `<div class="page-head"><h1>Apps</h1>
-      <p class="muted">Las apps comunes se instalan y se mantienen al día en los móviles que las necesitan. Pulsa una celda para
-        instalarla en ese móvil, quitarla o marcar que no la necesita.</p></div>
-    <section id="catalog">${loading('Comprobando qué tiene cada móvil…')}</section>
-    <section id="others"></section>`;
+      <p class="muted">Tus favoritas, en los móviles que las necesitan; lo demás, fuera.</p></div>
+    <div class="segmented apps-tabs" role="tablist">
+      <button type="button" role="tab" data-act="apps-tab" data-tab="favoritas">Favoritas</button>
+      <button type="button" role="tab" data-act="apps-tab" data-tab="limpiar">Limpiar<span id="clean-count"></span></button>
+    </div>
+    <section id="catalog" data-tab="favoritas">${loading('Comprobando qué tiene cada móvil…')}</section>
+    <section id="cleanup" data-tab="limpiar">${loading('Mirando todas las apps de cada móvil…')}</section>`;
+  showAppsTab(tab);
+  state.reloadCleanup = () => api('/cleanup').then(data => {
+    if (!current()) return;
+    state.cleanup = data;
+    renderCleanup();
+  });
   state.reload = () => Promise.all([
     api('/catalog').then(data => {
       if (!current()) return;
@@ -437,44 +458,52 @@ async function viewOverview(current) {
       state.devices = data.devices;
       $('#catalog').innerHTML = catalogHtml(data);
     }),
-    api('/overview').then(data => {
-      if (!current()) return;
-      state.overview = data;
-      $('#others').innerHTML = othersHtml(data);
-    }),
+    state.reloadCleanup(),
   ]);
   await state.reload();
+}
+
+function showAppsTab(tab) {
+  for (const b of document.querySelectorAll('.apps-tabs [data-tab]')) b.classList.toggle('on', b.dataset.tab === tab);
+  for (const s of document.querySelectorAll('section[data-tab]')) s.hidden = s.dataset.tab !== tab;
+  history.replaceState(null, '', tab === 'limpiar' ? '#/apps/limpiar' : '#/apps');
 }
 
 function catalogHtml({ apps, devices, auto, last }) {
   const pending = (d, a) => d.status?.[a.pkg] && !['ok', 'skip'].includes(d.status[a.pkg].state);
   const total = devices.reduce((n, d) => n + apps.filter(a => pending(d, a)).length, 0);
+  // En la cabecera de cada móvil, poner de una vez las favoritas que le faltan
+  const head = d => {
+    const n = apps.filter(a => pending(d, a)).length;
+    return `<th class="dev-col" data-serial="${esc(d.serial)}">${esc(title(d))}${n ? `<button class="btn small dev-act" data-act="sync-phone"
+      title="Instala en ${esc(title(d))} las ${n} favoritas que le faltan o tienen versión nueva">Poner (${n})</button>` : ''}</th>`;
+  };
   const bar = `<div class="card bar">
-      <button class="btn primary" data-act="add-app">＋ Añadir app</button>
+      <button class="btn primary" data-act="add-app">＋ Añadir favorita</button>
       <button class="btn" data-act="sync-all" ${total ? '' : 'disabled'}>${total ? `Instalar lo pendiente (${total})` : 'Todo al día ✓'}</button>
       <span class="spacer"></span>
       <label class="switch" title="Cada 5 minutos instala y actualiza en los móviles conectados las apps de APK propio y F-Droid">
         <input type="checkbox" data-act="auto" ${auto ? 'checked' : ''}><span class="knob"></span>Instalar y actualizar solas</label>
       ${last ? `<span class="muted small">Última vez a las ${time(last.at)}: ${last.ok} ${last.ok === 1 ? 'hecha' : 'hechas'}${last.failed ? `, ${last.failed} con error` : ''}</span>` : ''}
     </div>`;
-  if (!apps.length) return `${bar}<div class="card empty"><strong>Aún no hay apps comunes.</strong>
-    <p class="muted">Añade las que quieres en todos los móviles: tu propio APK, una app de F-Droid o una de Google Play.</p></div>`;
+  if (!apps.length) return `${bar}<div class="card empty"><strong>Aún no hay favoritas.</strong>
+    <p class="muted">Añade las que quieres en los móviles: tu propio APK, una app de F-Droid o una de Google Play.</p></div>`;
   const rows = apps.map(a => `<tr data-pkg="${esc(a.pkg)}">
       <td class="app-cell"><div class="app-id">${appIcon(a)}<div>
         <div class="app-name">${esc(a.name)}</div>
-        <div class="app-meta"><code>${esc(a.pkg)}</code>${tag(SOURCES[a.source] + (a.versionName ? ` · ${a.versionName}` : ''), `src-${a.source}`)}</div>
+        <div class="app-meta"><code>${esc(a.pkg)}</code>${tag((a.url ? 'Enlace' : SOURCES[a.source]) + (a.versionName ? ` · ${a.versionName}` : ''), `src-${a.source}`)}</div>
       </div></div></td>
       ${devices.map(d => statusCell(d, a)).join('')}
       <td class="row-actions">
         <button class="btn small" data-act="sync-app" ${devices.some(d => pending(d, a)) ? '' : 'disabled'}>${a.source === 'play' ? 'Abrir en Play' : 'Instalar donde falte'}</button>
         <button class="btn ghost icon small" data-act="rename-app" title="Cambiar el nombre">✎</button>
-        <button class="btn ghost icon small danger" data-act="remove-app" title="Quitar de las apps comunes">✕</button>
+        <button class="btn small ghost danger" data-act="remove-app" title="Dejar de tenerla como favorita y, si quieres, desinstalarla de todos">Quitar…</button>
       </td>
     </tr>`).join('');
   return `${bar}
     ${devices.length ? '' : '<p class="problem">No hay móviles listos: conéctalos en <a href="#/">Dispositivos</a>.</p>'}
     <div class="card flush scroll-x"><table class="matrix catalog">
-      <thead><tr><th>App común</th>${devices.map(d => `<th class="dev-col">${esc(title(d))}</th>`).join('')}<th></th></tr></thead>
+      <thead><tr><th>Favorita</th>${devices.map(head).join('')}<th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     <p class="legend muted small">
@@ -499,7 +528,7 @@ function statusCell(d, a) {
     title="${esc(tip)}. Pulsa para elegir qué hacer" aria-label="${esc(tip)}">${label}</button></td>`;
 }
 
-// Una app común en un móvil: instalarla o ponerla al día, quitarla de ese móvil, o marcar si la necesita
+// Una favorita en un móvil: instalarla o ponerla al día, quitarla de ese móvil, o marcar si la necesita
 async function appCell(btn) {
   const pkg = ctx(btn, 'pkg'), serial = ctx(btn, 'serial');
   const a = state.catalog.apps.find(x => x.pkg === pkg), d = state.catalog.devices.find(x => x.serial === serial);
@@ -531,50 +560,196 @@ async function appCell(btn) {
   });
 }
 
-function othersHtml({ devices, keep }) {
-  if (!devices.length) return '';
-  const common = new Set(keep.map(k => k.pkg));
-  const pkgs = [...new Set(devices.flatMap(d => d.third))].filter(p => !common.has(p)).sort();
-  const rows = pkgs.map(pkg => `<tr data-pkg="${esc(pkg)}">
-      <td class="star-cell">${starButton(pkg, false)}</td>
-      <td class="app-cell"><code>${esc(pkg)}</code></td>
-      ${devices.map(d => (d.third.includes(pkg)
-        ? `<td class="cell" data-serial="${esc(d.serial)}"><button class="cell-btn" data-act="app" data-action="uninstall"
-            title="Instalada en ${esc(title(d))}. Pulsa para desinstalarla" aria-label="Desinstalar de ${esc(title(d))}"></button></td>`
-        : '<td class="cell"><span class="none">·</span></td>')).join('')}
-    </tr>`).join('');
+// ── Limpiar ──
+// Lo que sobra: tus apps que no son favoritas y las del sistema que sugiere el panel o que marcas tú, más las del sistema
+// que ya se quitaron, para poder recuperarlas. Nunca las favoritas, las de «No tocar» ni las imprescindibles. En cada
+// móvil, «on» si la tiene y «off» si se quitó
 
-  const debloat = devices.map(d => {
-    const db = d.debloat;
-    const status = !db.exists ? `<span class="muted">sin lista: crea <code>${esc(db.file)}</code></span>`
-      : db.pkgs.length ? `${db.pkgs.length} por quitar <button class="btn small danger" data-act="debloat">Quitar…</button>`
-      : '<span class="ok-text">nada por quitar ✓</span>';
-    return `<li data-serial="${esc(d.serial)}"><strong>${esc(title(d))}</strong>${d.name ? ` <span class="muted">(${esc(model(d))})</span>` : ''} — ${status}</li>`;
-  }).join('');
+const CLEAN_KIND = { mine: '', suggested: 'Sugerida', marked: 'Marcada por ti', removed: 'Quitada' };
+const appLabel = pkg => state.names?.[pkg]?.name || state.cleanup?.suggested[pkg] || pkg;
 
-  return `
-    <h2>Otras apps en los móviles</h2>
-    <div class="card summary">
-      <div class="muted">${pkgs.length ? 'Instaladas en algún móvil pero no son comunes. ★ la hace común; pulsar su ✓ la desinstala de ese móvil.'
-        : 'Ninguna: los móviles solo tienen apps comunes ✓'}</div>
-      <button class="btn danger" data-act="prune" ${pkgs.length && keep.length ? '' : 'disabled'}
-        title="${keep.length ? 'Desinstala de todos los móviles las apps que no son comunes' : 'Añade antes las apps comunes'}">Quitarlas todas…</button>
+function cleanupRows({ devices, favorites, suggested, marked, ignored }) {
+  const fav = new Set(favorites), skip = new Set(ignored), mine = new Set(marked);
+  const rows = new Map();
+  for (const d of devices) {
+    for (const [pkg, [system, installed, , needed]] of Object.entries(d.apps)) {
+      if (fav.has(pkg) || needed || (!system && !installed)) continue;
+      const kind = !system ? 'mine' : mine.has(pkg) ? 'marked' : pkg in suggested ? 'suggested' : 'removed';
+      if (kind !== 'removed' && skip.has(pkg)) continue;
+      if (!rows.has(pkg)) rows.set(pkg, { pkg, system: Boolean(system), kind, cells: new Map() });
+      rows.get(pkg).cells.set(d.serial, installed ? 'on' : 'off');
+    }
+  }
+  // De las que no están en ninguna lista, solo las que algún móvil tiene quitadas
+  return [...rows.values()].filter(r => r.kind !== 'removed' || [...r.cells.values()].includes('off'))
+    .sort((a, b) => a.system - b.system || appLabel(a.pkg).localeCompare(appLabel(b.pkg), 'es'));
+}
+
+// Lo que se quitaría (de un móvil, de una app o de todo): sus celdas «on», salvo las de «Quitada», que no están en ninguna lista
+const removable = (serial, pkg) => (state.cleanRows || []).filter(r => r.kind !== 'removed' && (!pkg || r.pkg === pkg))
+  .flatMap(r => [...r.cells].filter(([s, v]) => v === 'on' && (!serial || s === serial))
+    .map(([s]) => ({ serial: s, pkg: r.pkg, note: appLabel(r.pkg) })));
+
+function renderCleanup() {
+  const data = state.cleanup, { devices } = data;
+  const rows = state.cleanRows = cleanupRows(data);
+  const total = removable().length;
+  $('#clean-count').textContent = total ? ` (${total})` : '';
+  const head = d => {
+    const n = removable(d.serial).length;
+    return `<th class="dev-col" data-serial="${esc(d.serial)}">${esc(title(d))}${n ? `<button class="btn small danger dev-act" data-act="clean-phone"
+      title="Quita de ${esc(title(d))} las ${n} apps que sobran">Limpiar (${n})</button>` : ''}</th>`;
+  };
+  const group = (label, list) => (list.length
+    ? `<tr class="group"><th colspan="${devices.length + 3}">${label}</th></tr>${list.map(cleanRow).join('')}` : '');
+  $('#cleanup').innerHTML = `
+    <div class="card bar">
+      <span>${total ? `Sobran <strong>${total}</strong> ${total === 1 ? 'app' : 'apps'} en los móviles` : 'Los móviles están limpios ✓'}</span>
+      <span class="spacer"></span>
+      <button class="btn danger" data-act="clean-all" ${total ? '' : 'disabled'}>Limpiar todos…</button>
     </div>
     ${devices.filter(d => d.error).map(d => `<p class="problem">${esc(title(d))}: ${esc(d.error)}</p>`).join('')}
-    ${pkgs.length ? `<div class="card flush scroll-x"><table class="matrix">
-      <thead><tr><th></th><th>App</th>${devices.map(d => `<th class="dev-col">${esc(title(d))}</th>`).join('')}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>` : ''}
-    <h2>Apps del sistema que sobran</h2>
-    <div class="card">
-      <p class="muted">Para quitar en bloque apps del sistema (bloatware), crea <code>datos/debloat/&lt;fabricante&gt;.txt</code> en la carpeta del proyecto
-        con un paquete por línea. Se quitan solo para el usuario y se recuperan con «Restaurar» en la ficha del móvil.</p>
-      <ul class="debloat">${debloat}</ul>
-    </div>`;
+    ${rows.length ? `<div class="card flush scroll-x"><table class="matrix cleanup">
+      <thead><tr><th></th><th>App</th>${devices.map(head).join('')}<th></th></tr></thead>
+      <tbody>${group('Instaladas por ti', rows.filter(r => !r.system))}${group('Del sistema', rows.filter(r => r.system))}</tbody>
+    </table></div>
+    <p class="legend muted small"><span><span class="st update">●</span> sobra: púlsala para quitarla de ese móvil</span>
+      <span><span class="st skip">○</span> quitada: púlsala para recuperarla</span><span><span class="none">·</span> no la tiene</span>
+      <span>· Las del sistema se quitan solo para el usuario del móvil: no se borran y se pueden recuperar.</span></p>` : ''}
+    <div class="card clean-search">
+      <h3>¿Sobra alguna más?</h3>
+      <p class="muted small">Busca entre las apps del sistema de los móviles y márcala para quitarla. No salen las favoritas ni las
+        imprescindibles: Chrome, Google Play, el escritorio, el teclado y el propio sistema.</p>
+      <input type="search" id="clean-search" placeholder="Busca por nombre o paquete: facebook, música, samsung…" autocomplete="off"
+        aria-label="Buscar apps del sistema" value="${esc(state.cleanQuery || '')}">
+      <ul class="clean-results" id="clean-results"></ul>
+    </div>
+    ${data.ignored.length ? `<details class="card"><summary>No se tocan (${data.ignored.length})</summary>
+      <p class="muted small">Ni se sugieren ni se quitan al limpiar.</p>
+      <ul class="clean-results">${data.ignored.map(pkg => cleanItem(pkg, '',
+        '<button class="btn small" data-act="clean-mark" data-mark="">Volver a sugerir</button>')).join('')}</ul></details>` : ''}`;
+  searchCleanup();
+  fetchNames([...rows.map(r => r.pkg), ...data.ignored]);
+}
+
+function cleanRow(r) {
+  const { devices, suggested } = state.cleanup;
+  const info = state.names?.[r.pkg];
+  // Con el nombre de Google Play, lo que dice la sugerencia va debajo (si no dice lo mismo)
+  const why = info?.name && suggested[r.pkg] && fold(suggested[r.pkg]) !== fold(info.name)
+    ? `<span class="why">${esc(suggested[r.pkg])}</span>` : '';
+  const cells = devices.map(d => {
+    const v = r.cells.get(d.serial), where = title(d);
+    if (!v) return `<td class="cell"><span class="none" title="${esc(where)} no la tiene">·</span></td>`;
+    const [label, kind, tip] = v === 'on'
+      ? ['●', r.kind === 'removed' ? 'missing' : 'update', `En ${where}. Pulsa para quitarla de ese móvil`]
+      : ['○', 'skip', `Quitada de ${where}. Pulsa para recuperarla`];
+    return `<td class="cell" data-serial="${esc(d.serial)}"><button class="st ${kind}" data-act="clean-cell"
+      title="${esc(tip)}" aria-label="${esc(tip)}">${label}</button></td>`;
+  }).join('');
+  const has = v => [...r.cells.values()].includes(v);
+  const actions = [
+    r.kind !== 'removed' && has('on') && '<button class="btn small danger" data-act="clean-row" title="Quitarla de todos los móviles que la tienen">Quitar de todos</button>',
+    has('off') && '<button class="btn small" data-act="restore-row" title="Recuperarla en los móviles donde se quitó">Recuperar</button>',
+    r.kind !== 'removed' && '<button class="btn small ghost" data-act="clean-mark" data-mark="ignore" title="Que no se sugiera ni se quite al limpiar">No tocar</button>',
+  ].filter(Boolean).join('');
+  return `<tr data-pkg="${esc(r.pkg)}">
+    <td class="star-cell">${r.system ? '' : starButton(r.pkg, false)}</td>
+    <td class="app-cell"><div class="app-id">${appIcon({ pkg: r.pkg, name: appLabel(r.pkg), icon: info?.icon })}<div>
+      <div class="app-name">${esc(appLabel(r.pkg))}</div>
+      <div class="app-meta">${why}<code>${esc(r.pkg)}</code>${CLEAN_KIND[r.kind] ? tag(CLEAN_KIND[r.kind], r.kind === 'removed' ? '' : 'warn') : ''}</div>
+    </div></div></td>
+    ${cells}
+    <td class="row-actions"><div class="stack">${actions}</div></td>
+  </tr>`;
+}
+
+// Una app en una lista corta (lo buscado, las de «No tocar»): icono, nombre, paquete, una nota y un botón
+const cleanItem = (pkg, note, button) => `<li data-pkg="${esc(pkg)}">${appIcon({ pkg, name: appLabel(pkg), icon: state.names?.[pkg]?.icon })}
+  <span class="clean-name"><strong>${esc(appLabel(pkg))}</strong><code>${esc(pkg)}</code>${note ? `<span class="muted small">${esc(note)}</span>` : ''}</span>
+  ${button}</li>`;
+
+// Las del sistema que aún no están en la lista y coinciden con lo buscado, para marcarlas (como mucho 30)
+function searchCleanup() {
+  const box = $('#clean-results'), text = (state.cleanQuery || '').trim(), q = fold(text);
+  if (!box) return;
+  if (q.length < 2) {
+    box.innerHTML = '';
+    return;
+  }
+  const { devices, favorites, ignored } = state.cleanup;
+  const listed = new Set([...state.cleanRows.filter(r => r.kind !== 'removed').map(r => r.pkg), ...favorites, ...ignored]);
+  const found = new Map();
+  for (const d of devices) {
+    for (const [pkg, [system, installed, , needed]] of Object.entries(d.apps)) {
+      if (!system || needed || listed.has(pkg) || !fold(`${pkg} ${appLabel(pkg)}`).includes(q)) continue;
+      if (!found.has(pkg)) found.set(pkg, []);
+      if (installed) found.get(pkg).push(title(d));
+    }
+  }
+  const list = [...found].slice(0, 30);
+  box.innerHTML = list.map(([pkg, where]) => cleanItem(pkg, where.length ? `En ${where.join(', ')}` : 'Quitada en todos',
+    '<button class="btn small danger" data-act="clean-mark" data-mark="remove">Sobra</button>')).join('')
+    || `<li class="muted">Ninguna app del sistema coincide con «${esc(text)}».</li>`;
+  fetchNames(list.map(([pkg]) => pkg));
+}
+
+// Nombres e iconos de Google Play, de 40 en 40, para lo que se está enseñando; al llegar se vuelve a pintar (si se está
+// escribiendo en el buscador, solo lo buscado, para no quitarle el foco)
+const askedNames = new Set();
+async function fetchNames(pkgs) {
+  const missing = [...new Set(pkgs)].filter(p => !askedNames.has(p));
+  missing.forEach(p => askedNames.add(p));
+  for (let i = 0; i < missing.length; i += 40) {
+    let names;
+    try { ({ names } = await post('/appnames', { pkgs: missing.slice(i, i + 40) })); } catch { return; }
+    if (!Object.keys(names).length) continue;
+    state.names = { ...state.names, ...names };
+    if (!$('#cleanup') || !state.cleanup) return;
+    if (document.activeElement === $('#clean-search')) searchCleanup();
+    else renderCleanup();
+  }
+}
+
+// Quitar o recuperar una app en un móvil, desde su celda
+async function cleanCell(btn) {
+  const serial = ctx(btn, 'serial'), pkg = ctx(btn, 'pkg');
+  const r = state.cleanRows.find(x => x.pkg === pkg), d = deviceBy(serial);
+  const on = r.cells.get(serial) === 'on';
+  if (on && !await ask(`¿Quitar ${appLabel(pkg)} de ${title(d)}?`, r.system
+    ? '<p>Se quita para el usuario del móvil: no se borra, y se recupera pulsando otra vez su celda.</p>'
+    : '<p>Se desinstala, con sus datos.</p>', 'Quitar')) return;
+  await busy(btn, async () => {
+    toast(`${appLabel(pkg)}: ${(await post(`/devices/${enc(serial)}/apps/${enc(pkg)}/${on ? 'uninstall' : 'restore'}`)).message}`);
+    await state.reloadCleanup();
+  });
+}
+
+async function cleanJobs(btn, jobs, question) {
+  if (!jobs.length) return;
+  const system = new Set(state.cleanRows.filter(r => r.system).map(r => r.pkg));
+  const mine = jobs.some(j => !system.has(j.pkg)), theirs = jobs.some(j => system.has(j.pkg));
+  const how = [theirs && 'Las del sistema no se borran: se pueden recuperar.', mine && 'Las tuyas se desinstalan, con sus datos.'];
+  const ok = await ask(question, `<p>Se quitarán ${jobs.length === 1 ? 'esta app' : `estas ${jobs.length} apps`}.
+    ${how.filter(Boolean).join(' ')}</p>${jobList(jobs)}`, `Quitar ${jobs.length}`);
+  if (ok) await busy(btn, () => runJobs(jobs, 'uninstall', state.reloadCleanup));
+}
+
+// Sobra, No tocar o Volver a sugerir: se guarda y se pinta otra vez sin volver a preguntar a los móviles
+async function cleanMark(btn) {
+  const pkg = ctx(btn, 'pkg'), mark = btn.dataset.mark;
+  await busy(btn, async () => {
+    await post('/cleanup/mark', { pkg, mark });
+    const c = state.cleanup;
+    c.marked = c.marked.filter(p => p !== pkg).concat(mark === 'remove' ? [pkg] : []);
+    c.ignored = c.ignored.filter(p => p !== pkg).concat(mark === 'ignore' ? [pkg] : []);
+    if (mark === 'remove') toast(`${appLabel(pkg)}: marcada; pulsa sus ● o «Quitar de todos»`);
+    renderCleanup();
+  });
 }
 
 // Ejecuta acciones sobre varias apps: en paralelo entre móviles, de una en una dentro de cada móvil
-async function runJobs(jobs, action) {
+async function runJobs(jobs, action, after = state.reload) {
   const errors = [];
   const bySerial = Map.groupBy(jobs, j => j.serial);
   await Promise.all([...bySerial].map(async ([serial, list]) => {
@@ -586,27 +761,11 @@ async function runJobs(jobs, action) {
   }));
   toast(`Hecho: ${jobs.length - errors.length} de ${jobs.length}`, errors.length ? 'error' : 'ok');
   errors.forEach(e => toast(e, 'error'));
-  await state.reload();
+  await after();
 }
 
 const jobList = jobs => [...Map.groupBy(jobs, j => j.serial)].map(([serial, list]) =>
-  `<p><strong>${esc(title(deviceBy(serial)))}</strong></p><ul>${list.map(j => `<li><code>${esc(j.pkg)}</code>${j.note ? ` — ${esc(j.note)}` : ''}</li>`).join('')}</ul>`).join('');
-
-async function prune(btn) {
-  const keep = new Set(state.overview.keep.map(k => k.pkg));
-  const jobs = state.overview.devices.flatMap(d => d.third.filter(p => !keep.has(p)).map(pkg => ({ serial: d.serial, pkg })));
-  const ok = await ask('¿Quitar las apps que sobran?',
-    `<p>Se desinstalarán estas ${jobs.length} apps, con sus datos, porque no son apps comunes:</p>${jobList(jobs)}`, `Desinstalar ${jobs.length}`);
-  if (ok) await busy(btn, () => runJobs(jobs, 'uninstall'));
-}
-
-async function debloat(btn) {
-  const d = state.overview.devices.find(x => x.serial === ctx(btn, 'serial'));
-  const jobs = d.debloat.pkgs.map(p => ({ serial: d.serial, ...p }));
-  const ok = await ask(`¿Quitar apps del sistema de ${title(d)}?`,
-    `<p>Según <code>${esc(d.debloat.file)}</code> se quitarán (se pueden restaurar):</p>${jobList(jobs)}`, `Quitar ${jobs.length}`);
-  if (ok) await busy(btn, () => runJobs(jobs, 'uninstall'));
-}
+  `<p><strong>${esc(title(deviceBy(serial)))}</strong></p><ul>${list.map(j => `<li>${j.note && j.note !== j.pkg ? `${esc(j.note)} ` : ''}<code>${esc(j.pkg)}</code></li>`).join('')}</ul>`).join('');
 
 // Instala lo pendiente (de una app, de un móvil o de todo) y resume cómo ha ido
 async function syncNow(body, what) {
@@ -630,15 +789,19 @@ async function syncNow(body, what) {
   await state.reload();
 }
 
+// Deja de ser favorita; si está en algún móvil, se puede dejar ahí (pasa a Limpiar) o desinstalar de todos
 async function removeApp(pkg, name) {
   name ||= state.catalog?.apps.find(a => a.pkg === pkg)?.name || pkg;
-  const ok = await ask(`¿Quitar ${name} de las apps comunes?`,
-    '<p>No se desinstala de ningún móvil: deja de instalarse en los demás y pasa a «Otras apps».</p>', 'Quitar de la lista');
-  if (ok) {
-    await post(`/catalog/${enc(pkg)}/remove`);
-    toast(`${name} ya no es una app común`);
-  }
-  return ok;
+  const where = (state.catalog?.devices || []).filter(d => d.status?.[pkg]?.have != null);
+  const choice = await choose(`¿Quitar ${name} de favoritas?`, `<p>Deja de instalarse y de ponerse al día.</p>${where.length
+    ? `<p>Ahora está en ${where.length === 1 ? title(where[0]) : `${where.length} móviles`}: puedes dejarla ahí (saldrá en «Limpiar») o desinstalarla, con sus datos.</p>` : ''}`,
+  [['list', where.length ? 'Solo quitar de favoritas' : 'Quitar de favoritas', where.length ? '' : 'danger'],
+    ...(where.length ? [['all', where.length === 1 ? 'Desinstalarla también' : `Desinstalarla de los ${where.length}`, 'danger']] : [])]);
+  if (!choice) return false;
+  await post(`/catalog/${enc(pkg)}/remove`);
+  if (choice === 'all') await runJobs(where.map(d => ({ serial: d.serial, pkg })), 'uninstall', async () => {});
+  toast(`${name} ya no es favorita`);
+  return true;
 }
 
 async function renameApp(btn) {
@@ -651,18 +814,19 @@ async function renameApp(btn) {
   });
 }
 
-// Diálogo para añadir una app común; con serial ofrece copiar el APK desde ese móvil
+// Diálogo para añadir una favorita; con serial ofrece copiar el APK desde ese móvil
 function addAppDialog({ pkg = '', serial = null } = {}) {
   const tabs = [
     serial && ['copy', `Copiar de ${title(deviceBy(serial))}`],
     ['play', 'Google Play'],
     ['fdroid', 'F-Droid'],
     ['apk', 'Subir APK'],
+    ['url', 'Enlace'],
   ].filter(Boolean);
   const dlg = $('#dialog');
   dlg.className = 'wide';
   dlg.innerHTML = `<form method="dialog">
-      <h2>Añadir app común</h2>
+      <h2>Añadir favorita</h2>
       <div class="segmented" role="tablist">${tabs.map(([k, label]) => `<button type="button" role="tab" data-tab="${k}">${esc(label)}</button>`).join('')}</div>
       <p class="muted" data-panel="copy">Se copia el APK de <code>${esc(pkg)}</code> desde ese móvil y se instala igual en los demás.
         Vale para apps de una sola pieza, como tus apps privadas; las de Google Play suelen venir partidas y no se pueden copiar.</p>
@@ -671,8 +835,12 @@ function addAppDialog({ pkg = '', serial = null } = {}) {
       <p class="muted" data-panel="fdroid">El panel descarga la última versión de F-Droid, la instala en todos y la actualiza cuando salga otra.</p>
       <label class="drop compact" data-panel="apk"><input type="file" accept=".apk" hidden>
         <strong>Elige o arrastra aquí el .apk</strong><span class="muted small">Se guarda en el panel y se instala tal cual en todos los móviles.</span></label>
+      <p class="muted" data-panel="url">El PC descarga el .apk de ese enlace (de una release de GitHub, de la web de la app…),
+        comprueba que es una app y la instala en todos, como un APK subido. Para tener una versión nueva, añade otra vez el enlace.</p>
       <label class="field" data-panel="play fdroid"><span>Paquete o enlace de la tienda</span>
         <input name="pkg" value="${esc(pkg)}" placeholder="org.videolan.vlc o https://play.google.com/store/apps/details?id=…" autocomplete="off"></label>
+      <label class="field" data-panel="url"><span>Enlace al archivo .apk</span>
+        <input name="url" type="url" placeholder="https://github.com/…/releases/download/…/app.apk" autocomplete="off"></label>
       <label class="field"><span>Nombre <span class="muted small">(opcional: si no, el de la tienda o el del archivo)</span></span>
         <input name="name" maxlength="60" autocomplete="off"></label>
       <label class="check"><input type="checkbox" name="now" checked> Instalarla ya en todos los móviles</label>
@@ -706,14 +874,16 @@ function addAppDialog({ pkg = '', serial = null } = {}) {
     const f = Object.fromEntries(new FormData(form));
     const name = (f.name || '').trim();
     if (tab === 'apk' && !apk) return void (error.textContent = 'Elige primero el archivo .apk');
+    if (tab === 'url' && !f.url.trim()) return void (error.textContent = 'Pega primero el enlace al .apk');
     await busy($('#add-ok'), async () => {
       try {
         const { app } = tab === 'apk'
           ? await api(`/catalog/upload?name=${enc(name)}&file=${enc(apk.name.replace(/\.apk$/i, ''))}`, { method: 'POST', file: apk })
+          : tab === 'url' ? await post('/catalog/url', { url: f.url, name })
           : tab === 'copy' ? await post('/catalog/copy', { serial, pkg, name })
           : await post('/catalog/add', { source: tab, pkg: f.pkg, name });
         dlg.close();
-        toast(`${app.name} es ya una app común`);
+        toast(`${app.name} es ya favorita`);
         if (f.now) await syncNow({ pkg: app.pkg }, `Instalando ${app.name}`);
         else await state.reload();
       } catch (err) {
@@ -738,10 +908,23 @@ const ICON = {
   sound: icon('<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>'),
   muted: icon('<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 6 6m0-6-6 6"/>'),
   look: icon('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'),
+  screenOn: icon('<rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/>'),
+  screenOff: icon('<rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M3 3l18 18"/>'),
   reload: icon('<path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/>'),
   songs: icon('<path d="M3 6h12M3 11h12M3 16h7"/><path d="M19 17V5l3 1"/><circle cx="16.5" cy="17" r="2.5"/>', 18),
   close: icon('<path d="M6 6l12 12M18 6 6 18"/>', 20),
+  info: icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>', 15),
+  control: icon('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>', 18),
+  wifi: icon('<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/>', 18),
+  unplug: icon('<path d="m19 5 3-3M2 22l3-3M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4zM7.5 13.5 10 11M10.5 16.5 13 14M12 6l6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0z"/>', 18),
 };
+// Un botón solo con icono; lo que hace sale al pasar el ratón y lo leen los lectores de pantalla
+const iconBtn = (act, svg, label, kind = '') =>
+  `<button class="btn icon ${kind}" data-act="${act}" title="${esc(label)}" aria-label="${esc(label)}">${svg}</button>`;
+// Una «i» que explica algo al pasar el ratón (o al llegar con el tabulador)
+const info = text => `<span class="info" tabindex="0" role="img" aria-label="${esc(text)}" title="${esc(text)}">${ICON.info}</span>`;
+const DELAY_HELP = 'Si un móvil se oye antes que los demás, súbele el retraso; si se oye después, bájalo. '
+  + 'La prueba de sincronía (en Canciones) da un pitido por segundo para cuadrarlos de oído.';
 const SPEAKER_STATE = {
   tap: ['Esperando un toque', 'diff', 'Chrome necesita que alguien toque la pantalla del móvil antes de dejar sonar la música. El panel lo hace solo al abrirlo; si no, tócala tú o pulsa la lupa («Ver pantalla») y hazlo desde el PC'],
   idle: ['Listo', 'ok', ''],
@@ -781,7 +964,7 @@ function renderMusic() {
   $('#music').innerHTML = `
     <div class="card now">
       <div class="now-head">
-        <div class="now-title"><span class="muted small" id="now-state"></span><strong id="now-song"></strong></div>
+        <div class="now-title"><span class="muted now-state"><span class="eq" aria-hidden="true"><i></i><i></i><i></i></span><span id="now-state"></span></span><strong id="now-song"></strong><span class="muted small" id="now-next"></span></div>
         <div class="now-controls">
           <button class="btn" data-act="songs" title="Elegir qué suena">${ICON.songs}Canciones</button>
           <div class="transport">
@@ -807,15 +990,14 @@ function renderMusic() {
     </div>
     <div class="section-head"><h2>Altavoces</h2>
       <div class="actions">
-        ${mb('all', 'Que suenen todos', 'Quita el silencio a todos los altavoces')}
+        <button class="btn" id="all-btn" data-act="music" data-action="none"></button>
         <button class="btn" data-act="speaker-all" title="Abre la página de altavoz en todos los móviles conectados">Abrir en todos</button>
+        <button class="btn" data-act="screen-all" title="Abre en este PC la pantalla de cada móvil, para verlas y manejarlas a la vez">Mostrar todos</button>
       </div></div>
     ${devices.length ? `<div class="card flush scroll-x"><table class="matrix speakers">
-      <thead><tr><th>Móvil</th><th>Estado</th><th>Volumen</th><th>Retraso (ms)</th><th></th></tr></thead>
+      <thead><tr><th>Móvil</th><th>Estado</th><th>Volumen</th><th>Retraso (ms)${info(DELAY_HELP)}</th><th></th></tr></thead>
       <tbody>${devices.map(speakerRow).join('')}</tbody>
-    </table></div>` : '<p class="problem">No hay móviles listos: conéctalos en <a href="#/">Dispositivos</a>.</p>'}
-    <p class="muted small">Si un móvil se oye antes que los demás, súbele el retraso; si se oye después, bájalo. La prueba de sincronía
-      (en Canciones) da un pitido por segundo para cuadrarlos de oído.</p>`;
+    </table></div>` : '<p class="problem">No hay móviles listos: conéctalos en <a href="#/">Dispositivos</a>.</p>'}`;
   updateMusic();
 }
 
@@ -854,7 +1036,7 @@ function speakerRow(d) {
       type="number" class="delay-val" min="-1000" max="1000" step="1" title="${esc(tip)}. Puedes escribirlo, de −1000 a 1000"
       aria-label="Retraso de ${esc(title(d))} en milisegundos"><button class="btn small icon" data-act="delay"
       data-step="1" title="${esc(tip)}" aria-label="1 ms más de retraso">+</button></td>
-    <td class="row-actions"><button class="btn small icon" data-act="screen" aria-label="Ver pantalla"
+    <td class="row-actions"><button class="btn small icon screen-mode" data-act="screen-mode"></button><button class="btn small icon" data-act="screen" aria-label="Ver pantalla"
       title="Ver pantalla: verla y manejarla desde el PC, para desbloquearlo o tocar «Toca para activar el altavoz»">${ICON.look}</button><button
       class="btn small" data-act="speaker-open"></button></td>
   </tr>`;
@@ -865,11 +1047,21 @@ let songsKey = '';
 function updateMusic() {
   const { now, rooms, songs } = state.music;
   $('#now-song').textContent = now.song ? now.name : 'Nada sonando';
+  $('#now-next').textContent = now.song && now.next ? `Después: ${now.next}` : '';
   $('#now-state').textContent = !now.song ? 'Elige una canción en «Canciones»' : now.waiting ? 'Preparando los altavoces…' : now.playing ? 'Sonando' : 'En pausa';
   $('#now-toggle').textContent = now.playing ? '⏸ Pausa' : now.song ? '▶ Seguir' : '▶ Reproducir';
   $('#now-pos').textContent = now.song ? mmss(now.position) : '';
   $('#now-dur').textContent = now.song ? mmss(now.duration) : '';
   $('#now-bar').style.width = now.song && now.duration ? `${Math.min(100, now.position / now.duration * 100)}%` : '0';
+  $('.card.now').classList.toggle('playing', Boolean(now.song && now.playing && !now.waiting));
+  // Si alguno de los que están abiertos suena, el botón los silencia todos; si no, los hace sonar
+  const anyOn = Object.values(rooms).some(r => r.linked && r.on);
+  const all = $('#all-btn');
+  if (all.dataset.action !== (anyOn ? 'none' : 'all') || !all.innerHTML) {
+    all.dataset.action = anyOn ? 'none' : 'all';
+    all.innerHTML = anyOn ? `${ICON.muted}Silenciar todos` : `${ICON.sound}Que suenen todos`;
+    all.title = anyOn ? 'Silencia todos los altavoces' : 'Quita el silencio a todos los altavoces';
+  }
   if (document.activeElement !== $('#shuffle')) $('#shuffle').checked = now.shuffle;
   if (document.activeElement !== $('#sleep') && !now.stopAt) $('#sleep').value = '0';
   $('#sleep-at').textContent = now.stopAt ? `Se pausa a las ${time(now.stopAt)}` : '';
@@ -892,9 +1084,20 @@ function updateMusic() {
       ? `<span class="muted small sp-clock" title="${esc(drift)}">desfase ${Math.round(Math.abs(room.off))} ms</span>` : '';
     tr.querySelector('.sp-state').innerHTML = `<span class="val ${kind}" title="${esc([tip, room?.linked && margin].filter(Boolean).join('. '))}">${esc(text)}</span>${clock}`
       + (room?.lan ? `<span class="tag" title="Su Android es viejo: llega al PC por la wifi y Chrome no le deja mantener la pantalla encendida. Enchufado, con «Pantalla encendida mientras carga» (Ajustes), no se apaga. Déjalo enchufado">wifi</span>` : '')
+      + (room?.screen === false ? '<span class="tag" title="Solo altavoz: suena con la pantalla apagada">sin pantalla</span>' : '')
       + (room?.error ? `<div class="err-text small">${esc(room.error)}</div>` : '');
     // Los botones de icono se rehacen solo al cambiar, para no pisar uno que está trabajando
     const on = room ? room.on : true;
+    // Con pantalla o sin ella (solo altavoz, con la pantalla apagada para que gaste menos)
+    const screen = room?.screen !== false, mode = tr.querySelector('.screen-mode');
+    if (mode.dataset.on !== String(screen)) {
+      mode.dataset.on = screen;
+      mode.innerHTML = screen ? ICON.screenOn : ICON.screenOff;
+      mode.classList.toggle('headless', !screen);
+      mode.title = screen ? 'Con pantalla: se ve el reproductor. Pulsa para dejarlo solo de altavoz, con la pantalla apagada (gasta menos)'
+        : 'Sin pantalla: solo altavoz, con la pantalla apagada. Pulsa para volver a ver el reproductor';
+      mode.setAttribute('aria-label', screen ? 'Dejarlo sin pantalla' : 'Volver a ver la pantalla');
+    }
     const mute = tr.querySelector('.mute');
     if (mute.dataset.on !== String(on)) {
       mute.dataset.on = on;
@@ -1076,7 +1279,8 @@ setInterval(async () => {
 
 async function viewSettings(current) {
   view.innerHTML = `<div class="page-head"><h1>Ajustes</h1>
-      <p class="muted">Un perfil común para todos los móviles: elige cómo quieres cada ajuste y aplícalo de una vez.</p></div>
+      <p class="muted">Un perfil común para todos los móviles: elige cómo quieres cada ajuste y aplícalo de una vez. Si algún móvil
+        lo necesita distinto (uno que solo es altavoz, otro que solo hace de mando), pulsa su casilla.</p></div>
     <section id="settings">${loading('Leyendo los ajustes de cada móvil…')}</section>`;
   state.reload = async () => {
     const data = await api('/settings');
@@ -1088,9 +1292,13 @@ async function viewSettings(current) {
   await state.reload();
 }
 
-// ok: el móvil ya lo tiene como el perfil · diff: hay que cambiarlo · free: el perfil no lo toca
+// Lo que tiene que tener cada móvil: lo suyo, si lo tiene distinto («» es que en ese móvil no se toca), o el perfil
+const own = (d, s) => state.settings.exceptions?.[d.serialno]?.[s.key];
+const wantFor = (d, s) => own(d, s) ?? state.settings.profile[s.key];
+
+// ok: el móvil ya lo tiene como debe · diff: hay que cambiarlo · free: no se toca
 function settingState(d, s) {
-  const want = state.settings.profile[s.key];
+  const want = wantFor(d, s);
   return !want ? 'free' : d.settings[s.key].value === want ? 'ok' : 'diff';
 }
 const usable = (d, s) => d.settings && !d.settings[s.key].na;
@@ -1122,23 +1330,47 @@ function renderSettings() {
       <tbody>${rows}</tbody>
     </table></div>
     <p class="legend muted small">
-      <span><span class="val ok">Así</span> como el perfil</span>
-      <span><span class="val diff">Así</span> distinto: púlsalo para cambiarlo en ese móvil</span>
-      <span><span class="val">Así</span> el perfil no lo toca</span>
-      <span><span class="none">—</span> su Android no lo tiene</span></p>`;
+      <span><span class="val ok">Así</span> como debe estar</span>
+      <span><span class="val diff">Así</span> distinto: falta cambiarlo</span>
+      <span><span class="val">Así</span> no se toca</span>
+      <span><span class="val ok own">Así</span> ese móvil lo tiene distinto del perfil</span>
+      <span><span class="none">—</span> su Android no lo tiene</span>
+      <span>· Pulsa una casilla para cambiar ese móvil.</span></p>`;
 }
+
+const optionText = (s, v) => s.options.find(([o]) => o === v)?.[1] ?? v;
 
 function settingCell(d, s) {
   if (!d.settings) return `<td class="cell"><span class="none" title="${esc(d.error || 'No se pudo leer')}">?</span></td>`;
   const v = d.settings[s.key];
   if (v.na) return `<td class="cell"><span class="none" title="${esc(`${title(d)}: ${v.na}`)}">—</span></td>`;
-  const st = settingState(d, s);
-  const now = v.text ?? '?';
-  if (st !== 'diff') return `<td class="cell"><span class="val ${st}">${esc(now)}</span></td>`;
-  const want = s.options.find(([o]) => o === state.settings.profile[s.key])[1];
-  const tip = `${title(d)}: ${now} → ${want}. Pulsa para cambiarlo`;
-  return `<td class="cell" data-serial="${esc(d.serial)}"><button class="val diff" data-act="apply-cell"
+  const st = settingState(d, s), now = v.text ?? '?', mine = own(d, s), want = wantFor(d, s);
+  const tip = [`${title(d)}: ${now}`, st === 'diff' && `tiene que estar en ${optionText(s, want)}`,
+    mine !== undefined && (mine === '' ? 'en este móvil no se toca' : 'propio de este móvil'), 'Pulsa para elegir'].filter(Boolean).join('. ');
+  return `<td class="cell" data-serial="${esc(d.serial)}"><button class="val ${st} ${mine !== undefined ? 'own' : ''}" data-act="setting-cell"
     title="${esc(tip)}" aria-label="${esc(tip)}">${esc(now)}</button></td>`;
+}
+
+// Un ajuste en un móvil: elegir su valor (si no es el del perfil, queda como propio de ese móvil), volver a como el
+// perfil o no tocarlo ahí. Se cambia en el móvil al momento
+async function settingChoice(btn) {
+  const d = deviceBy(ctx(btn, 'serial')), s = state.settings.settings.find(x => x.key === ctx(btn, 'key'));
+  const now = d.settings[s.key].text ?? '?', mine = own(d, s), common = state.settings.profile[s.key], want = wantFor(d, s);
+  const html = `<p>Ahora tiene <strong>${esc(now)}</strong>. En el perfil común: <strong>${esc(common ? optionText(s, common) : 'No tocar')}</strong>.</p>
+    ${mine !== undefined ? `<p>Este móvil lo tiene distinto: <strong>${esc(mine === '' ? 'No tocar' : optionText(s, mine))}</strong>.</p>` : ''}
+    <p class="muted">Elige qué quieres en ${esc(title(d))}; se cambia ya.</p>`;
+  const choice = await choose(`${s.name} en ${title(d)}`, html, [
+    ...s.options.map(([v, text]) => [`v:${v}`, text, v === want ? 'primary' : '']),
+    ...(common && mine !== '' ? [['skip', 'No tocar aquí']] : []),
+    ...(mine !== undefined ? [['profile', 'Como el perfil']] : []),
+  ]);
+  if (!choice) return;
+  const value = choice === 'profile' ? null : choice === 'skip' ? '' : choice.slice(2) === common ? null : choice.slice(2);
+  await busy(btn, async () => {
+    await post('/settings/device', { serialno: d.serialno, key: s.key, value });
+    if (value === '' || (value === null && !common)) await state.reload();
+    else await applySettings({ serials: [d.serial], key: s.key });
+  });
 }
 
 // Cambiar el perfil no toca los móviles: marca lo que cambiaría, y se aplica con los botones
@@ -1163,71 +1395,35 @@ async function applySettings(body) {
   await state.reload();
 }
 
-// ── Instalar APK ────────────────────────────────────────────────────────────
-
-async function viewInstall(current) {
-  let apk = null;
-  view.innerHTML = `
-    <div class="page-head"><h1>Instalar APK</h1><p class="muted">Instala o actualiza una app en varios móviles a la vez.</p></div>
-    <form class="card" id="install-form">
-      <label class="drop" id="drop">
-        <input type="file" id="apk" accept=".apk" hidden>
-        <strong id="drop-text">Arrastra aquí un .apk o haz clic para elegirlo</strong>
-        <span class="muted small">De momento solo APK de una pieza; los .apks / .xapk partidos aún no.</span>
-      </label>
-      <fieldset id="targets"><legend>Instalar en</legend>${loading('Buscando móviles…')}</fieldset>
-      <button class="btn primary" id="install-btn">Instalar</button>
-      <ul id="results" class="results"></ul>
-    </form>`;
-  const drop = $('#drop');
-  const pick = file => {
-    apk = file;
-    drop.classList.toggle('has', Boolean(file));
-    $('#drop-text').textContent = file ? `${file.name} · ${(file.size / 1048576).toFixed(1)} MB` : 'Arrastra aquí un .apk o haz clic para elegirlo';
-  };
-  $('#apk').onchange = e => pick(e.target.files[0]);
-  drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
-  drop.ondragleave = () => drop.classList.remove('over');
-  drop.ondrop = e => {
-    e.preventDefault();
-    drop.classList.remove('over');
-    pick(e.dataTransfer.files[0]);
-  };
-
-  const { devices } = await api('/devices');
-  if (!current()) return;
-  state.devices = devices;
-  const ready = devices.filter(d => d.state === 'device' && !d.error);
-  $('#targets').innerHTML = '<legend>Instalar en</legend>' + (ready.map(d => `<label class="check">
-      <input type="checkbox" name="serial" value="${esc(d.serial)}" checked> ${esc(title(d))}</label>`).join('')
-    || '<p class="muted">No hay móviles listos. Conéctalos en <a href="#/">Dispositivos</a>.</p>');
-
-  $('#install-form').onsubmit = async e => {
-    e.preventDefault();
-    const serials = [...document.querySelectorAll('input[name=serial]:checked')].map(i => i.value);
-    if (!apk) return toast('Elige primero un archivo .apk', 'error');
-    if (!serials.length) return toast('Marca al menos un móvil', 'error');
-    $('#results').innerHTML = '';
-    await busy($('#install-btn'), async () => {
-      const { results } = await api(`/install?serials=${enc(serials.join(','))}`, { method: 'POST', file: apk });
-      $('#results').innerHTML = results.map(r => `<li><strong>${esc(title(deviceBy(r.serial)))}</strong>:
-        <span class="${r.ok ? 'ok-text' : 'err-text'}">${esc(r.message)}</span></li>`).join('');
-    });
-  };
-  state.reload = async () => {};
-}
-
 // ── Botones y formularios ───────────────────────────────────────────────────
 
 const actions = {
   app: appAction,
   keep: toggleKeep,
   rename: renameDevice,
-  prune,
-  debloat,
+  'apps-tab': btn => showAppsTab(btn.dataset.tab),
+  lan: async btn => {
+    try {
+      $('#lan').innerHTML = lanHtml(await post('/red', { on: btn.checked }));
+    } catch (e) {
+      btn.checked = !btn.checked;
+      toast(e.message, 'error');
+    }
+  },
   'add-app': () => addAppDialog(),
   'sync-all': btn => busy(btn, () => syncNow({}, 'Instalando lo pendiente')),
   'sync-app': btn => busy(btn, () => syncNow({ pkg: ctx(btn, 'pkg') }, 'Instalando')),
+  'sync-phone': btn => busy(btn, () => syncNow({ serial: ctx(btn, 'serial') }, `Poniendo las favoritas en ${title(deviceBy(ctx(btn, 'serial')))}`)),
+  'clean-cell': cleanCell,
+  'clean-mark': cleanMark,
+  'clean-row': btn => cleanJobs(btn, removable(null, ctx(btn, 'pkg')), `¿Quitar ${appLabel(ctx(btn, 'pkg'))} de todos los móviles?`),
+  'clean-phone': btn => cleanJobs(btn, removable(ctx(btn, 'serial')), `¿Limpiar ${title(deviceBy(ctx(btn, 'serial')))}?`),
+  'clean-all': btn => cleanJobs(btn, removable(), '¿Limpiar todos los móviles?'),
+  'restore-row': btn => {
+    const pkg = ctx(btn, 'pkg');
+    const jobs = [...state.cleanRows.find(r => r.pkg === pkg).cells].filter(([, v]) => v === 'off').map(([serial]) => ({ serial, pkg }));
+    return busy(btn, () => runJobs(jobs, 'restore', state.reloadCleanup));
+  },
   'app-cell': appCell,
   'rename-app': renameApp,
   'remove-app': btn => busy(btn, async () => { if (await removeApp(ctx(btn, 'pkg'))) await state.reload(); }),
@@ -1241,7 +1437,7 @@ const actions = {
     }
   },
   'apply-all': btn => busy(btn, () => applySettings({ serials: state.settings.devices.filter(d => changes(d).length).map(d => d.serial) })),
-  'apply-cell': btn => busy(btn, () => applySettings({ serials: [ctx(btn, 'serial')], key: ctx(btn, 'key') })),
+  'setting-cell': settingChoice,
   quick: btn => busy(btn, () => runQuick(ctx(btn, 'serial'), btn.dataset.action)),
   music: btn => busy(btn, async () => {
     const { warning } = await post(`/music/${btn.dataset.action}`, { song: ctx(btn, 'song'), id: ctx(btn, 'id') });
@@ -1250,6 +1446,16 @@ const actions = {
   }),
   'speaker-open': btn => busy(btn, () => openSpeakers([deviceBy(ctx(btn, 'serial'))], btn.dataset.again === '1')),
   'speaker-all': btn => busy(btn, () => openSpeakers(state.devices.filter(isReady))),
+  // La pantalla de cada móvil en una ventana del PC (scrcpy), todas a la vez
+  'screen-all': btn => busy(btn, async () => {
+    const list = state.devices.filter(isReady);
+    if (!list.length) return toast('No hay móviles listos', 'error');
+    const results = await Promise.all(list.map(d => post(`/devices/${enc(d.serial)}/screen`, { title: title(d) })
+      .then(() => ({ d, ok: true }), e => ({ d, ok: false, message: e.message }))));
+    const ok = results.filter(r => r.ok).length;
+    if (ok) toast(`Abriendo en el PC la pantalla de ${ok === 1 ? title(results.find(r => r.ok).d) : `${ok} móviles`}`);
+    for (const r of results.filter(x => !x.ok)) toast(`${title(r.d)}: ${r.message}`, 'error');
+  }),
   'music-folder': btn => busy(btn, () => post('/music/folder')),
   songs: openSongs,
   'songs-close': () => $('#songs-dlg').close(),
@@ -1260,6 +1466,12 @@ const actions = {
     await refreshMusic();
   }),
   mute: btn => busy(btn, () => toggleMute(btn)),
+  'screen-mode': btn => busy(btn, async () => {
+    const id = ctx(btn, 'id'), screen = state.music.rooms[id]?.screen !== false;
+    await post('/music/room', { id, serial: ctx(btn, 'serial'), screen: !screen });
+    toast(screen ? `${title(deviceBy(ctx(btn, 'serial')))}: sin pantalla; se apaga en cuanto descanse (15 s)` : `${title(deviceBy(ctx(btn, 'serial')))}: con pantalla otra vez`);
+    await refreshMusic();
+  }),
   seek: (bar, e) => seekTo(bar, e).catch(err => toast(err.message, 'error')),
   delay: btn => busy(btn, async () => {
     const id = ctx(btn, 'id');
@@ -1299,6 +1511,10 @@ view.addEventListener('click', e => {
 view.addEventListener('input', e => {
   if (e.target.matches('.vol')) showVolume(e.target);
   if (e.target.matches('#song-filter')) filterSongs();
+  if (e.target.matches('#clean-search')) {
+    state.cleanQuery = e.target.value;
+    searchCleanup();
+  }
 });
 
 view.addEventListener('keydown', e => {
@@ -1337,6 +1553,40 @@ view.addEventListener('submit', async e => {
 });
 
 $('#refresh').onclick = () => { checkStatus().catch(() => {}); route(); };
+// Los temas: el botón de la cabecera abre la lista, cada uno con una muestra de sus colores (fondo, color y su pareja).
+// Se cambia al momento y lo recuerda este navegador (cada ordenador o móvil que abra el panel, el suyo)
+const THEMES = [
+  ['clasico', 'Clásico', 'El verde de siempre, claro u oscuro', '#181c22', '#3ddc84', '#e5e8ee'],
+  ['neon', 'Neón', 'Noche de los 80, rejilla y brillos', '#170530', '#ff2fb3', '#22e4ff'],
+  ['tocadiscos', 'Tocadiscos', 'Amplificador de madera y vúmetro', '#241a12', '#ffaa1d', '#ff5a1f'],
+  ['aurora', 'Aurora', 'Cristal sobre luces de colores', '#0d1220', '#6ff2d0', '#8b7bff'],
+  ['casete', 'Casete', 'Etiqueta de cinta, en claro', '#f1e6d0', '#e5542b', '#2b1d14'],
+  ['fosforo', 'Fósforo', 'Monitor verde de los de antes', '#020a04', '#39ff6a', '#c6ff3a'],
+];
+const currentTheme = () => THEMES.find(t => t[0] === document.documentElement.dataset.theme) || THEMES[0];
+function showThemes(open) {
+  $('#theme-list').hidden = !open;
+  $('#theme-btn').setAttribute('aria-expanded', open);
+  if (!open) return;
+  $('#theme-list').innerHTML = THEMES.map(([id, name, about, bg, a, b]) => `<button role="menuitemradio" data-pick="${id}"
+    aria-checked="${id === currentTheme()[0]}"><span class="swatch" style="--s-bg:${bg};--s-a:${a};--s-b:${b}"></span>
+    <span><strong>${name}</strong><small>${about}</small></span><span class="check">✓</span></button>`).join('');
+  $('#theme-list [aria-checked=true]').focus();
+}
+$('#theme-name').textContent = currentTheme()[1];
+$('#theme-btn').onclick = () => showThemes($('#theme-list').hidden);
+$('#theme-list').onclick = e => {
+  const pick = e.target.closest('[data-pick]');
+  if (!pick) return;
+  // El Clásico es no tener tema: así no le llegan los detalles que comparten los demás
+  if (pick.dataset.pick === THEMES[0][0]) delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = pick.dataset.pick;
+  try { localStorage.setItem('tema', pick.dataset.pick); } catch {}
+  $('#theme-name').textContent = currentTheme()[1];
+  showThemes(false);
+};
+document.addEventListener('click', e => { if (!e.target.closest('.theme-menu')) showThemes(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#theme-list').hidden) { showThemes(false); $('#theme-btn').focus(); } });
 window.addEventListener('hashchange', route);
 checkStatus().catch(e => toast(`No contesta el panel: ${e.message}`, 'error'));
 route();

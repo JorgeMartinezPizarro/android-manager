@@ -132,7 +132,7 @@ function shell(p, c) {
   if ((m = c.match(/^echo (.*)$/))) return out(m[1]);
   if (c === 'dumpsys battery') return out(`Current Battery Service state:\n  AC powered: false\n  USB powered: ${p.battery < 100}\n  level: ${p.battery}\n  scale: 100`);
   if (c.startsWith('ip ')) return out(`30: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500\n    inet ${p.ip}/24 brd 192.168.1.255 scope global wlan0`);
-  if ((m = c.match(/^pm list packages((?: -\w)*)(?: (\S+))?$/))) {
+  if ((m = c.match(/^(?:pm|cmd package) list packages((?: -\w)*)(?: (\S+))?$/))) {
     for (const [pkg, a] of Object.entries(p.apps).sort()) {
       const f = m[1];
       if ((m[2] && !pkg.includes(m[2])) || (a.removed && !f.includes('-u')) || (f.includes('-3') && a.system)

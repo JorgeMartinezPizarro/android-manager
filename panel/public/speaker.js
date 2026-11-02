@@ -12,8 +12,10 @@
   const HORIZON = 10; // s en los que se quiere absorber un desfase pequeño, acelerando o frenando
   const LEARN = 400; // s²: lo despacio que aprende cuánto adelanta o atrasa de por sí el reloj del audio de este móvil
   const MAX_RATE = 0.005; // como mucho un 0,5 % más rápido o más lento: el tono no cambia de forma que se note
+  const AHEAD = 45; // s antes de que acabe una canción en los que se descomprime la siguiente (ya descargada) para tenerla lista
   const SIMULATED = (Number(params.get('deriva')) || 0) / 1e6; // ?deriva=<ppm>: para probar, como si el audio se fuera desviando
   const BORN = performance.now();
+  const PAGE = Date.now(); // para el PC: si hay varias pestañas de altavoz en el móvil, cuenta la más nueva
   const clamp = (x, max) => Math.max(-max, Math.min(max, x));
   // Recta por unos puntos {x (ms), y}: su valor en cada x y lo que se separan de ella (rms). La pendiente, solo si los puntos
   // abarcan al menos minSpan ms (con menos, lo que mediría es el ruido) y como mucho maxSlope
@@ -28,9 +30,13 @@
 
   let state = null; // lo último que ha dicho el PC
   let linked = false;
+  let replaced = false; // el PC ha dicho que hay otra pestaña de altavoz más nueva
   let ctx = null, gain = null;
   let track = null; // { song, buffer }: la canción ya cargada
   let loading = null, failed = null, error = '';
+  // La siguiente que va a sonar, preparándose: se descarga en cuanto suena la actual, pero se descomprime solo al final de
+  // esta (descomprimida ocupa mucho y los móviles viejos tienen poca memoria). data y decoding son promesas; ready, el audio
+  let ahead = null; // { song, data, decoding, ready }
   // Lo que está sonando: en el instante at del reloj del audio iba por pos (s de la canción) y avanza a rate s por s;
   // target es la hora del PC (más el retraso) a la que empezó, y errors, los desfases medidos en los últimos 10 s
   let current = null;
@@ -77,17 +83,33 @@
     return ctx;
   }
 
+  async function download(song) {
+    const res = await fetch('/song/' + encodeURIComponent(song));
+    if (!res.ok) throw new Error('el PC no la encuentra');
+    return res.arrayBuffer();
+  }
+
+  // Si ya estaba preparada, se usa tal cual (al momento) o lo que lleve hecho; si su preparación falló, se carga de nuevo
   async function load(song) {
-    loading = song;
-    track = null;
+    const pre = ahead && ahead.song === song ? ahead : null;
+    ahead = null;
     error = '';
     stopSound();
+    if (pre && pre.ready) {
+      loading = null;
+      track = { song, buffer: pre.ready };
+      return;
+    }
+    loading = song;
+    track = null;
     try {
-      const res = await fetch('/song/' + encodeURIComponent(song));
-      if (!res.ok) throw new Error('el PC no la encuentra');
-      const data = await res.arrayBuffer();
+      let buffer = pre && pre.decoding ? await pre.decoding.catch(() => null) : null;
       if (loading !== song) return;
-      const buffer = await audio().decodeAudioData(data);
+      if (!buffer) {
+        const data = await (pre && !pre.decoding ? pre.data.catch(() => download(song)) : download(song));
+        if (loading !== song) return;
+        buffer = await audio().decodeAudioData(data);
+      }
       if (loading !== song) return;
       track = { song, buffer };
     } catch (e) {
@@ -198,9 +220,27 @@
     const go = s && s.song && s.playing && s.on && s.startAt != null && track && track.song === s.song
       && ctx && ctx.state === 'running' && clock.ok;
     if (go) schedule(); else stopSound();
+    prepare(s);
     phase = !ctx || ctx.state !== 'running' ? 'tap' : error ? 'error' : loading ? 'loading' : current ? 'playing' : track ? 'ready' : 'idle';
     render();
     report();
+  }
+
+  // Va preparando la que sonará después, pero solo con la actual ya cargada, para no quitarle red ni procesador
+  function prepare(s) {
+    const next = s && s.song && s.next !== s.song ? s.next : null;
+    if (ahead && ahead.song !== next) ahead = null;
+    if (!next || loading || !track || track.song !== s.song || !ctx) return;
+    if (!ahead) {
+      ahead = { song: next, data: download(next), decoding: null, ready: null };
+      ahead.data.catch(() => {});
+    }
+    const pcNow = performance.timeOrigin + performance.now() + offsetAt(performance.now());
+    const pos = s.playing && s.startAt != null ? (pcNow - s.startAt) / 1000 : s.position || 0;
+    if (ahead.decoding || track.buffer.duration - pos > AHEAD) return;
+    const a = ahead;
+    a.decoding = a.data.then(data => ctx.decodeAudioData(data));
+    a.decoding.then(buffer => { a.ready = buffer; }, () => {});
   }
 
   // Al PC le cuenta cómo está, cuando cambia y cada 10 s. visible: la página está delante (el PC solo la toca entonces)
@@ -208,7 +248,7 @@
   function report() {
     if (!linked) return;
     const body = {
-      id: ID, phase, song: loading || (track && track.song) || null, duration: track ? track.buffer.duration : null,
+      id: ID, page: PAGE, phase, song: loading || (track && track.song) || null, duration: track ? track.buffer.duration : null,
       error, rtt: clock.rtt, fixes, visible: !document.hidden, rest: resting,
       off: offBy == null ? null : Math.round(offBy * 1e4) / 10, speed: current ? Math.round((current.rate - 1) * 1e5) / 1e3 : null,
       jitter: audioFit ? Math.round(audioFit.rms * 1e4) / 10 : null,
@@ -246,7 +286,8 @@
     }
     $('artist').textContent = dash > 0 ? name.slice(0, dash) : '';
     $('artist').hidden = dash <= 0;
-    const text = !linked ? 'Buscando el PC… (el panel tiene que estar en marcha)'
+    const text = replaced ? 'Hay otra pestaña haciendo de altavoz: toca para usar esta'
+      : !linked ? 'Buscando el PC… (el panel tiene que estar en marcha)'
       : error ? error
       : !s.song ? 'Elige una canción'
       : !s.on ? 'Aquí está silenciado'
@@ -393,10 +434,16 @@
     none.textContent = 'Ninguna canción con «' + text + '»';
   }
 
-  // Pantalla encendida mientras la página esté delante: con la pantalla apagada, Android puede dormir Chrome y dejaría de oír al PC
+  // Pantalla encendida mientras la página esté delante: con la pantalla apagada, Android puede dormir Chrome y dejaría de oír al PC.
+  // Un altavoz «sin pantalla» (lo elige el panel) no la pide, y la suelta si la tenía: suena con la pantalla apagada
   let lock = null;
+  const headless = () => Boolean(state && state.screen === false);
   async function wake(on) {
-    if (!on || document.hidden || lock || !navigator.wakeLock) return;
+    if (headless() && lock && lock.release) {
+      lock.release();
+      lock = null;
+    }
+    if (!on || headless() || document.hidden || lock || !navigator.wakeLock) return;
     lock = 'pidiendo';
     try {
       lock = await navigator.wakeLock.request('screen');
@@ -427,8 +474,9 @@
   // Descanso: si nadie la toca en unos minutos se queda en negro y el PC baja el brillo del móvil al mínimo. En las pantallas
   // OLED (como la del Nexus 6) el negro apaga los píxeles: no se ve nada ni se graba la imagen. Vuelve en cuanto baja el dedo,
   // aunque lo arrastre (así no hay clic), y ese toque no pulsa nada. Solo descansa estando delante: con otra app delante, el
-  // brillo tiene que estar normal
+  // brillo tiene que estar normal. Sin pantalla descansa a los 15 s, y al descansar el panel le apaga la pantalla
   const REST = (Number(params.get('descanso')) || 180) * 1000; // ?descanso=<s>, para probar
+  const HEADLESS_REST = 15000;
   let touched = Date.now(), resting = false;
   function setRest(on) {
     resting = on;
@@ -446,7 +494,7 @@
     if (document.hidden && resting) setRest(false);
   });
   setInterval(() => {
-    if (!resting && !document.hidden && Date.now() - touched > REST) setRest(true);
+    if (!resting && !document.hidden && Date.now() - touched > (headless() ? HEADLESS_REST : REST)) setRest(true);
   }, 5000);
 
   $('activate').onclick = () => {
@@ -484,7 +532,19 @@
 
   // ── Arranque ──
 
-  const events = new EventSource('/events?id=' + encodeURIComponent(ID));
+  // Si el PC dice que hay otra pestaña más nueva, esta se calla y se desconecta; al volver a mirarla, se recarga y pasa
+  // a ser ella el altavoz
+  const events = new EventSource('/events?id=' + encodeURIComponent(ID) + '&p=' + PAGE);
+  events.addEventListener('replaced', () => {
+    replaced = true;
+    events.close();
+    linked = false;
+    state = null;
+    ahead = null;
+    update();
+  });
+  document.addEventListener('visibilitychange', () => { if (replaced && !document.hidden) location.reload(); });
+  document.addEventListener('pointerdown', () => { if (replaced) location.reload(); });
   events.onopen = () => { linked = true; lastKey = ''; update(); changeVolume(0); };
   events.onmessage = e => {
     linked = true;

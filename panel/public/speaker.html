@@ -3,16 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#000000">
+  <meta name="theme-color" content="#05070d">
   <title>Altavoz</title>
   <style>
-    /* Fondo negro: en las pantallas OLED apenas gasta, y de noche casi no alumbra la habitación */
-    :root { --text: #eef1f5; --muted: #8d97a6; --accent: #3ddc84; --on-accent: #06301b; --line: #232a33; --surface: #0f141a;
-      --raised: #171d25; --warn: #f3b44a; color-scheme: dark; }
+    /* Tema Aurora, como el del panel: cristal esmerilado sobre luces de colores. Las luces son tenues y el fondo casi negro,
+       que en las pantallas OLED apenas gasta; al descansar, todo negro. Sin color-mix: el Chrome del Nexus 6 es el 101 */
+    :root { --text: #f5f8fc; --muted: #a6b0c6; --accent: #6ff2d0; --accent-2: #8b7bff; --on-accent: #06121a;
+      --line: rgb(255 255 255 / .1); --surface: rgb(255 255 255 / .06); --raised: rgb(255 255 255 / .09); --warn: #ffd27a;
+      --glass: linear-gradient(160deg, rgb(255 255 255 / .1), rgb(255 255 255 / .03)); --glass-line: rgb(255 255 255 / .13);
+      --lights: radial-gradient(110vw 45vh at 5% 8%, rgb(64 224 190 / .34), transparent 65%),
+        radial-gradient(120vw 50vh at 100% 42%, rgb(139 123 255 / .36), transparent 65%),
+        radial-gradient(130vw 40vh at 30% 100%, rgb(255 94 170 / .24), transparent 65%), #05070d;
+      color-scheme: dark; }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     html, body { height: 100%; }
-    body { margin: 0; background: #000; color: var(--text); font: 17px/1.45 system-ui, Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+    body { margin: 0; background: var(--lights); background-attachment: fixed; color: var(--text); font: 17px/1.45 system-ui, Roboto, sans-serif;
+      -webkit-tap-highlight-color: transparent; }
     button { font: inherit; color: inherit; cursor: pointer; }
     svg { fill: currentColor; }
 
@@ -22,9 +29,9 @@
     main { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 2vh 0; text-align: center; }
 
     .chip { display: inline-flex; align-items: center; gap: 8px; align-self: center; margin: 0; padding: 6px 14px; border-radius: 999px;
-      background: var(--raised); color: var(--muted); font-size: 15px; }
-    .chip.playing { color: var(--accent); background: rgb(61 220 132 / .1); }
-    .chip.warn { color: var(--warn); background: rgb(243 180 74 / .12); }
+      background: var(--raised); box-shadow: inset 0 0 0 1px var(--glass-line); color: var(--muted); font-size: 15px; }
+    .chip.playing { color: var(--accent); background: rgb(111 242 208 / .1); box-shadow: inset 0 0 0 1px rgb(111 242 208 / .25); }
+    .chip.warn { color: var(--warn); background: rgb(255 210 122 / .1); box-shadow: inset 0 0 0 1px rgb(255 210 122 / .25); }
     /* Tres barritas que bailan mientras suena aquí */
     .eq { display: none; align-items: flex-end; gap: 2px; height: 13px; }
     .chip.playing .eq { display: inline-flex; }
@@ -36,18 +43,26 @@
 
     /* El título en una sola línea. Si no cabe, se desliza hasta el final, espera y vuelve (lo mueve speaker.js), con los
        bordes difuminados */
-    h1 { margin: 18px 0 0; padding: 0 12px; overflow: hidden; white-space: nowrap; font-size: clamp(28px, 8.5vw, 42px); line-height: 1.2; letter-spacing: -.01em; }
+    h1 { margin: 18px 0 0; padding: 0 12px; overflow: hidden; white-space: nowrap; font-size: clamp(28px, 8.5vw, 42px); font-weight: 600; line-height: 1.2;
+      letter-spacing: -.02em; }
     #title-text { display: inline-block; }
     h1.slide { text-align: left; -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent); }
     #artist { margin: 8px 0 0; overflow: hidden; color: var(--muted); font-size: 19px; white-space: nowrap; text-overflow: ellipsis; }
-    .bar { height: 6px; margin: 24px 0 0; border-radius: 3px; background: var(--raised); overflow: hidden; }
-    #bar { display: block; width: 0; height: 100%; border-radius: 3px; background: var(--accent); transition: width 1s linear; }
-    .times { display: flex; justify-content: space-between; min-height: 1.5em; margin-top: 8px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+    /* La barra, con el punto por donde va encendido */
+    .bar { height: 6px; margin: 26px 8px 0; border-radius: 3px; background: rgb(255 255 255 / .12); }
+    #bar { position: relative; display: block; width: 0; height: 100%; border-radius: 3px; transition: width 1s linear;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2)); box-shadow: 0 0 12px rgb(139 123 255 / .45); }
+    #bar::after { content: ""; position: absolute; right: -7px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%;
+      background: #fff; box-shadow: 0 0 0 3px rgb(255 255 255 / .2), 0 0 14px var(--accent-2); }
+    #bar[style*="width: 0"]::after { display: none; }
+    .times { display: flex; justify-content: space-between; min-height: 1.5em; margin: 10px 8px 0; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
 
-    .controls { display: flex; justify-content: center; align-items: center; gap: 26px; margin-top: 14px; }
-    .controls button { display: grid; place-items: center; width: 64px; height: 64px; padding: 0; border: 0; border-radius: 50%; background: var(--raised); }
-    .controls button.main { width: 88px; height: 88px; background: var(--accent); color: var(--on-accent);
-      box-shadow: 0 0 0 8px rgb(61 220 132 / .12), 0 10px 34px rgb(61 220 132 / .22); }
+    /* Los botones, de cristal; el principal, blanco, como el foco de un mando en la tele */
+    .controls { display: flex; justify-content: center; align-items: center; gap: 26px; margin-top: 16px; }
+    .controls button { display: grid; place-items: center; width: 64px; height: 64px; padding: 0; border: 1px solid var(--glass-line); border-radius: 50%;
+      background: var(--glass); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+    .controls button.main { width: 88px; height: 88px; border: 0; background: #fff; color: #0a0f1c;
+      box-shadow: 0 0 0 8px rgb(255 255 255 / .08), 0 0 34px rgb(139 123 255 / .45), 0 0 60px rgb(111 242 208 / .2); }
     .controls svg { width: 30px; height: 30px; }
     .controls .main svg { width: 42px; height: 42px; }
     .controls button:active, .tile:active { transform: scale(.95); }
@@ -56,25 +71,28 @@
        hacen. La del medio, algo más ancha para que quepa «Silenciado» */
     .actions { display: grid; grid-template-columns: 1fr 1.35fr 1fr; gap: 10px; padding: 6px 0 max(18px, env(safe-area-inset-bottom)); }
     .tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-width: 0; padding: 12px 6px;
-      border: 1.5px solid #2b333e; border-radius: 24px; background: #131920; transition: border-color .2s, background .2s; }
-    .tile i { display: grid; place-items: center; flex: none; width: 50px; height: 50px; border-radius: 50%; background: rgb(61 220 132 / .14); color: var(--accent); }
+      border: 1px solid var(--glass-line); border-radius: 26px; background: var(--glass); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / .1), 0 14px 30px rgb(0 0 0 / .3); transition: border-color .2s, background .2s; }
+    .tile i { display: grid; place-items: center; flex: none; width: 50px; height: 50px; border-radius: 50%; color: var(--accent);
+      background: linear-gradient(135deg, rgb(111 242 208 / .2), rgb(139 123 255 / .2)); box-shadow: inset 0 0 0 1px rgb(255 255 255 / .1); }
     .tile svg { width: 28px; height: 28px; }
     .tile strong { font-size: 17px; line-height: 1.2; }
     .tile small { color: var(--muted); font-size: 13px; line-height: 1.2; font-variant-numeric: tabular-nums; }
     .tile.wide { grid-column: 1 / -1; flex-direction: row; gap: 14px; }
     .tile.wide strong { font-size: 19px; }
-    #here.off { border-color: rgb(243 180 74 / .45); background: rgb(243 180 74 / .07); }
-    #here.off i { background: rgb(243 180 74 / .16); color: var(--warn); }
+    #here.off { border-color: rgb(255 210 122 / .45); background: rgb(255 210 122 / .08); }
+    #here.off i { background: rgb(255 210 122 / .16); color: var(--warn); }
     #here.off strong { color: var(--warn); }
 
     /* Las canciones, a pantalla completa encima del reproductor; solo se desplaza la lista */
-    #picker { position: fixed; inset: 0; z-index: 1; background: #000; }
+    #picker { position: fixed; inset: 0; z-index: 1; background: var(--lights); }
     .sheet { display: flex; flex-direction: column; height: 100%; max-width: 680px; margin: 0 auto; }
     .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 12px 8px 20px; }
     .sheet-head strong { font-size: 24px; }
-    #picker-close { display: grid; place-items: center; flex: none; width: 60px; height: 60px; padding: 0; border: 0; border-radius: 50%; background: var(--raised); }
+    #picker-close { display: grid; place-items: center; flex: none; width: 60px; height: 60px; padding: 0; border: 1px solid var(--glass-line); border-radius: 50%;
+      background: var(--glass); }
     #picker-close svg { width: 32px; height: 32px; }
-    #find { margin: 0 20px 10px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--text); font: inherit; }
+    #find { margin: 0 20px 10px; padding: 12px 18px; border: 1px solid var(--glass-line); border-radius: 999px; background: var(--surface); color: var(--text); font: inherit; }
     #songs { flex: 1; margin: 0; padding: 0 20px 30px; overflow-y: auto; list-style: none; border-top: 1px solid var(--line); }
     #songs button { display: block; width: 100%; min-height: 60px; padding: 14px 6px; border: 0; border-bottom: 1px solid var(--line); background: none; font-size: 19px; text-align: left; }
     #songs button.now { color: var(--accent); font-weight: 600; }
@@ -82,7 +100,7 @@
     .empty { padding: 16px 6px; color: var(--muted); }
 
     #activate { position: fixed; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-      width: 100%; padding: 24px; border: 0; background: #000; text-align: center; }
+      width: 100%; padding: 24px; border: 0; background: var(--lights); text-align: center; }
     #activate svg { width: 96px; height: 96px; color: var(--accent); }
     #activate strong { font-size: 24px; }
     #activate span { max-width: 320px; color: var(--muted); }

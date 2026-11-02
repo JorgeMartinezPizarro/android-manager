@@ -107,12 +107,14 @@ async function devices() {
   return [...byPhone.values()];
 }
 
-const APPS = 'pm list packages; echo @@; pm list packages -3; echo @@; pm list packages -d; echo @@; pm list packages -u';
+// Desde Android 7, «cmd package» habla directamente con el sistema; «pm» arranca Java cada vez, y en los móviles viejos
+// las cuatro listas pasan de 8 s a 1 s. Antes de Android 7 solo hay pm
+const appsScript = sdk => ['', ' -3', ' -d', ' -u'].map(f => `${sdk >= 24 ? 'cmd package' : 'pm'} list packages${f}`).join('; echo @@; ');
 const pkgSet = text => new Set(text.split('\n').filter(l => l.startsWith('package:')).map(l => l.slice(8).trim()));
 
 // Todas las apps del móvil, incluidas las del sistema quitadas para el usuario (se pueden restaurar)
 async function apps(serial) {
-  const [installed, third, disabled, all] = (await shell(serial, APPS)).split('@@\n').map(pkgSet);
+  const [installed, third, disabled, all] = (await shell(serial, appsScript(await sdkOf(serial)))).split('@@\n').map(pkgSet);
   return [...all].sort().map(pkg => ({
     pkg, system: !third.has(pkg), installed: installed.has(pkg), enabled: !disabled.has(pkg),
   }));
@@ -241,6 +243,9 @@ const setBrightness = (serial, { mode, level, adj }) => writeSettings(serial, [`
 // ── Acciones rápidas ──
 
 const sdkOf = async serial => Number(await shell(serial, 'getprop ro.build.version.sdk')) || 0;
+
+// Si la pantalla está encendida (también si es la de bloqueo)
+const awake = async serial => /mWakefulness=Awake/.test(await shell(serial, 'dumpsys power | grep -m1 mWakefulness='));
 // Entre comillas simples el shell del móvil no interpreta nada; solo hay que escapar la propia comilla
 const quote = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
@@ -512,6 +517,6 @@ async function enableWifi(serial) {
 }
 
 module.exports = {
-  PKG, adbPath, startServer, serials, devices, apps, appAction, versions, install, openStore, pullApk,
+  PKG, adbPath, startServer, serials, devices, apps, appAction, versions, install, openStore, pullApk, awake,
   readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, reverse, wifiIp, openSpeaker, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
 };
