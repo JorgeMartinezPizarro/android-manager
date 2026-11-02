@@ -83,7 +83,9 @@ Consejo: reserva en el router una IP fija para cada móvil.
 - **Música**: tus canciones sonando a la vez en los móviles que marques. Cada móvil hace de altavoz con una página
   que el panel le abre en Chrome («Abrir altavoz» o «Abrir en todos»). No se manda «play» a cada uno, porque cada móvil
   tarda distinto en obedecer (de 0,2 a 3 s): todos ajustan su reloj con el del PC y el PC les dice a qué hora exacta
-  empieza la canción.
+  empieza la canción. Mientras suena, cada uno mide cada pocos segundos cuánto se ha ido de donde debería estar y lo corrige
+  solo, acelerando o frenando un poco (como mucho un 0,5 %, que no se nota en el tono); solo si se va más de 30 ms se recoloca
+  de golpe. En el panel, junto a «Sonando», sale su **desfase** en ese momento.
   - Las canciones son las de la carpeta `datos/musica/` (y sus subcarpetas): súbelas desde el panel o cópialas ahí.
     Valen mp3, m4a, aac, ogg, opus, wav y flac. Al acabar una suena la siguiente, y tras la última, otra vez la primera.
   - Cada altavoz tiene su **volumen** (el de la música del propio móvil, el mismo que cambian sus botones; el panel lo
@@ -92,7 +94,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
   - Pulsando en la barra de la canción se salta a ese punto. **Aleatorio** sigue con una canción cualquiera en vez de
     con la siguiente, y el **temporizador** pausa la música al cabo de 15 minutos a 2 horas.
   - **Prueba de sincronía**: un pitido por segundo. Si un móvil se oye antes que los demás, súbele el **retraso**;
-    si se oye después, bájalo. Un altavoz Bluetooth suele ir un poco por detrás: ese móvil, con retraso negativo.
+    si se oye después, bájalo. Va de milisegundo en milisegundo con − y +, o escribe el número. Un altavoz Bluetooth suele
+    ir un poco por detrás: ese móvil, con retraso negativo.
   - La página del altavoz ocupa toda la pantalla de cada móvil y hace de mando: desde cualquiera se puede pausar todos,
     pasar de canción, elegir otra o decir que suene ahí. La pantalla se queda encendida mientras la página está delante
     (si se apaga, Android puede dormir Chrome). Déjalos enchufados. Si nadie la toca en 3 minutos descansa: el panel baja el brillo

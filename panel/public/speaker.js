@@ -8,7 +8,13 @@
   const params = new URLSearchParams(location.search);
   const ID = params.get('id') || '';
   const SILENT = params.has('silencio');
-  const TOLERANCE = 0.03; // s de desfase con el PC a partir de los que se vuelve a cuadrar la canción
+  const JUMP = 0.03; // s de desfase con el PC a partir de los que se recoloca la canción de golpe; por debajo, sin saltos
+  const HORIZON = 10; // s en los que se quiere absorber un desfase pequeño, acelerando o frenando
+  const LEARN = 400; // s²: lo despacio que aprende cuánto adelanta o atrasa de por sí el reloj del audio de este móvil
+  const MAX_RATE = 0.005; // como mucho un 0,5 % más rápido o más lento: el tono no cambia de forma que se note
+  const SIMULATED = (Number(params.get('deriva')) || 0) / 1e6; // ?deriva=<ppm>: para probar, como si el audio se fuera desviando
+  const BORN = performance.now();
+  const clamp = (x, max) => Math.max(-max, Math.min(max, x));
   const PAUSE = 'M6 5h4v14H6zm8 0h4v14h-4z', PLAY = 'M8 5v14l11-7z';
 
   let state = null; // lo último que ha dicho el PC
@@ -16,13 +22,19 @@
   let ctx = null, gain = null;
   let track = null; // { song, buffer }: la canción ya cargada
   let loading = null, failed = null, error = '';
-  let current = null; // { source, song, zero }: lo que está sonando; zero es el instante del audio en que empezó la canción
-  let fixes = 0; // veces que se ha vuelto a cuadrar una canción ya empezada
+  // Lo que está sonando: en el instante at del reloj del audio iba por pos (s de la canción) y avanza a rate s por s;
+  // target es la hora del PC (más el retraso) a la que empezó, y errors, los desfases medidos en los últimos 10 s
+  let current = null;
+  let drift = 0; // lo que hay que acelerar (o frenar, si es negativo) de base para seguir al PC; se va aprendiendo
+  let offBy = null; // desfase con el PC (s, mediana de los últimos 10 s): positivo, va adelantado
+  let fixes = 0; // veces que se ha recolocado de golpe una canción ya empezada
   let phase = '';
 
-  // ── Reloj: la diferencia con el PC, de la medida más rápida de los últimos 60 s (la menos deformada por la red) ──
+  // ── Reloj: la diferencia con el PC, de las medidas más rápidas de los últimos 60 s (las menos deformadas por la red). Los
+  // relojes se van separando poco a poco: con una recta que pase por esas medidas se sigue esa deriva sin saltos ──
 
-  const clock = { offset: 0, rtt: null, ok: false, samples: [] };
+  const clock = { offset: 0, slope: 0, at: 0, rtt: null, ok: false, samples: [] };
+  const offsetAt = t => clock.offset + (t - clock.at) * clock.slope; // ms que hay que sumar a la hora de aquí para tener la del PC
 
   async function measure() {
     const t0 = performance.now();
@@ -37,8 +49,13 @@
     }
     clock.samples = clock.samples.filter(s => performance.now() - s.at < 60000).slice(-40);
     if (!clock.samples.length) return;
-    const best = clock.samples.reduce((a, b) => (b.rtt < a.rtt ? b : a));
-    Object.assign(clock, { offset: best.offset, rtt: Math.round(best.rtt), ok: true });
+    const best = clock.samples.slice().sort((a, b) => a.rtt - b.rtt).slice(0, Math.max(3, Math.ceil(clock.samples.length / 3)));
+    const mean = f => best.reduce((sum, s) => sum + f(s), 0) / best.length;
+    const at = mean(s => s.at), offset = mean(s => s.offset);
+    const spread = mean(s => (s.at - at) ** 2);
+    // La pendiente solo con medidas de al menos 20 s: con menos, lo que mide es el ruido de la red
+    const slope = spread > 4e8 / 12 ? clamp(mean(s => (s.at - at) * (s.offset - offset)) / spread, 0.001) : 0;
+    Object.assign(clock, { offset, slope, at, rtt: Math.round(best[0].rtt), ok: true });
   }
 
   // ── Audio ──
@@ -83,33 +100,63 @@
     if (!ts || !ts.performanceTime) {
       ts = { contextTime: ctx.currentTime - (ctx.outputLatency || ctx.baseLatency || 0), performanceTime: performance.now() };
     }
-    return ts.contextTime + (serverMs - clock.offset - performance.timeOrigin - ts.performanceTime) / 1000;
+    return ts.contextTime + (serverMs - offsetAt(ts.performanceTime) - performance.timeOrigin - ts.performanceTime) / 1000
+      + (performance.now() - BORN) / 1000 * SIMULATED;
   }
 
-  // Si ya suena y va a la hora, nada; si se ha desviado, la nueva empieza justo donde para la vieja, sin hueco
+  const posAt = (c, t) => c.pos + (t - c.at) * c.rate; // por dónde va la canción (s) en el instante t del reloj del audio
+  const median = list => list.slice().sort((a, b) => a - b)[list.length >> 1];
+
+  // Si ya suena, mide cuánto se ha ido de donde debería estar y lo corrige acelerando o frenando un poco, sin saltos. Solo
+  // si se ha ido mucho (al empezar, al saltar en la canción, al cambiar bastante el retraso) se recoloca de golpe: la nueva
+  // empieza justo donde para la vieja, sin hueco
   function schedule() {
-    const zero = ctxTime(state.startAt + state.delay);
-    if (current && current.song === state.song && Math.abs(current.zero - zero) < TOLERANCE) return;
-    const when = Math.max(zero, ctx.currentTime + 0.1);
-    const offset = when - zero;
+    const target = state.startAt + state.delay;
+    const zero = ctxTime(target), now = ctx.currentTime; // zero: instante del audio en que debería haber empezado
+    if (current && current.song === state.song) {
+      if (current.target !== target) { current.target = target; current.errors = []; } // las medidas de antes ya no valen
+      current.errors.push({ t: now, e: posAt(current, now) - (now - zero) });
+      current.errors = current.errors.filter(x => now - x.t < 10);
+      offBy = median(current.errors.map(x => x.e));
+      if (Math.abs(offBy) < JUMP) return steer(current, now);
+      fixes++;
+    }
+    const rate = 1 + drift;
+    const when = Math.max(zero, now + 0.1);
+    const pos = when - zero;
     if (current) {
-      if (current.song === state.song) fixes++;
       try { current.source.stop(when); } catch (e) {}
       current = null;
     }
-    if (offset >= track.buffer.duration) return;
+    if (pos >= track.buffer.duration) return;
     const source = ctx.createBufferSource();
     source.buffer = track.buffer;
+    source.playbackRate.value = rate;
     source.connect(gain);
     source.onended = () => {
       source.disconnect();
       if (current && current.source === source) { current = null; update(); }
     };
-    source.start(when, offset);
-    current = { source, song: state.song, zero };
+    source.start(when, pos);
+    current = { source, song: state.song, target, at: when, pos, rate, errors: [], steered: now };
+  }
+
+  // Para quitar el desfase en unos segundos, más lo que ya se sabe que adelanta o atrasa este móvil. Lo aprendido vale
+  // también para las siguientes canciones
+  function steer(c, now) {
+    if (now < c.at) return; // aún no ha empezado a sonar
+    drift = clamp(drift - offBy * Math.min(now - c.steered, 10) / LEARN, MAX_RATE / 2);
+    c.steered = now;
+    const rate = 1 + clamp(drift - offBy / HORIZON, MAX_RATE);
+    if (Math.abs(rate - c.rate) < 1e-5) return;
+    c.pos = posAt(c, now);
+    c.at = now;
+    c.rate = rate;
+    c.source.playbackRate.setValueAtTime(rate, now);
   }
 
   function stopSound() {
+    offBy = null;
     if (!current) return;
     try { current.source.stop(); } catch (e) {}
     current = null;
@@ -142,6 +189,7 @@
     const body = {
       id: ID, phase, song: loading || (track && track.song) || null, duration: track ? track.buffer.duration : null,
       error, rtt: clock.rtt, fixes, visible: !document.hidden, rest: resting,
+      off: offBy == null ? null : Math.round(offBy * 1e4) / 10, speed: current ? Math.round((current.rate - 1) * 1e5) / 1e3 : null,
     };
     const key = [phase, body.song, error, body.visible, resting].join('|');
     if (key === lastKey && Date.now() - lastSent < 10000) return;
@@ -275,15 +323,11 @@
     if (b) send('/control', { action: 'play', song: b.dataset.song });
   };
 
-  // Para depurar desde la consola: zero es la hora del PC (ms) a la que esta página hizo empezar la canción
+  // Para depurar desde la consola: offBy, el desfase con el PC (s); rate, la velocidad a la que va; drift, la aprendida
   window.altavoz = () => ({
-    phase, song: current && current.song, rtt: clock.rtt, offset: clock.offset,
-    zero: current && current.zero !== undefined ? ctxToServer(current.zero) : null, startAt: state && state.startAt,
+    phase, song: current && current.song, rtt: clock.rtt, offset: clock.offset, ppm: Math.round(clock.slope * 1e6), offBy, drift, fixes,
+    rate: current && current.rate, errors: current && current.errors.map(x => Math.round(x.e * 1e4) / 10),
   });
-  const ctxToServer = c => {
-    const ts = ctx.getOutputTimestamp();
-    return ts.performanceTime + (c - ts.contextTime) * 1000 + performance.timeOrigin + clock.offset;
-  };
 
   // ── Arranque ──
 

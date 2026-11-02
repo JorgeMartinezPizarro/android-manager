@@ -48,6 +48,7 @@ function put(entry) {
     icon: entry.icon || old.icon,
     versionCode: entry.source === 'play' ? undefined : entry.versionCode,
     versionName: entry.source === 'play' ? undefined : entry.versionName,
+    skip: old.skip,
   };
   if (old.source === 'apk' && app.source !== 'apk') fs.rmSync(apkFile(app.pkg), { force: true });
   data.apps = data.apps.filter(a => a.pkg !== app.pkg).concat(app);
@@ -71,6 +72,19 @@ function rename(pkg, name) {
   save(data);
 }
 
+// skip: los móviles (por número de serie) que no la necesitan; ahí ni se instala ni se actualiza. Los demás, y los que
+// lleguen nuevos, sí la llevan
+function setWanted(pkg, serialno, on) {
+  const data = load();
+  const app = data.apps.find(a => a.pkg === pkg);
+  if (!app) throw new Error('Esa app no está en la lista');
+  const skip = new Set(app.skip || []);
+  if (on) skip.delete(serialno);
+  else skip.add(serialno);
+  app.skip = skip.size ? [...skip].sort() : undefined;
+  save(data);
+}
+
 function remove(pkg) {
   const data = load();
   data.apps = data.apps.filter(a => a.pkg !== pkg);
@@ -84,4 +98,4 @@ function setAuto(on) {
   save(data);
 }
 
-module.exports = { load, put, putApk, rename, remove, setAuto, apkFile, fdroidDir };
+module.exports = { load, put, putApk, rename, setWanted, remove, setAuto, apkFile, fdroidDir };

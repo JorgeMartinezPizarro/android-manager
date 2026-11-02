@@ -355,6 +355,8 @@ function report(id, s) {
   sp.status = {
     phase: String(s.phase || ''), song, error: String(s.error || '').slice(0, 200),
     rtt: Number.isFinite(s.rtt) ? s.rtt : null, fixes: Number(s.fixes) || 0,
+    off: Number.isFinite(s.off) ? s.off : null, speed: Number.isFinite(s.speed) ? s.speed : null,
+    jitter: Number.isFinite(s.jitter) ? s.jitter : null,
   };
   if (song && s.duration > 0) durations.set(song, Number(s.duration));
   // Pide un toque: recién abierta por el panel, o recargada tras haber sonado. Solo si está delante (si no, el toque

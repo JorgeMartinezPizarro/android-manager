@@ -48,6 +48,20 @@ async function busy(btn, fn) {
 }
 
 // Diálogo de confirmación; devuelve true si se acepta
+// Como ask, pero con varias salidas: buttons es [[valor, texto, clase]]; devuelve el valor elegido o '' si se cancela
+function choose(title, html, buttons) {
+  const dlg = $('#dialog');
+  dlg.className = '';
+  dlg.innerHTML = `<form method="dialog">
+      <h2>${esc(title)}</h2><div class="dlg-body">${html}</div>
+      <menu><button class="btn" value="">Cancelar</button>${buttons.map(([value, label, kind = '']) =>
+        `<button class="btn ${kind}" value="${esc(value)}">${esc(label)}</button>`).join('')}</menu>
+    </form>`;
+  dlg.returnValue = '';
+  dlg.showModal();
+  return new Promise(resolve => dlg.addEventListener('close', () => resolve(dlg.returnValue), { once: true }));
+}
+
 function ask(title, html, okLabel = 'Aceptar', kind = 'danger') {
   const dlg = $('#dialog');
   dlg.className = '';
@@ -412,7 +426,8 @@ const appIcon = a => (a.icon
 
 async function viewOverview(current) {
   view.innerHTML = `<div class="page-head"><h1>Apps</h1>
-      <p class="muted">Las apps comunes se instalan y se mantienen al día en todos los móviles.</p></div>
+      <p class="muted">Las apps comunes se instalan y se mantienen al día en los móviles que las necesitan. Pulsa una celda para
+        instalarla en ese móvil, quitarla o marcar que no la necesita.</p></div>
     <section id="catalog">${loading('Comprobando qué tiene cada móvil…')}</section>
     <section id="others"></section>`;
   state.reload = () => Promise.all([
@@ -432,7 +447,7 @@ async function viewOverview(current) {
 }
 
 function catalogHtml({ apps, devices, auto, last }) {
-  const pending = (d, a) => d.status?.[a.pkg] && d.status[a.pkg].state !== 'ok';
+  const pending = (d, a) => d.status?.[a.pkg] && !['ok', 'skip'].includes(d.status[a.pkg].state);
   const total = devices.reduce((n, d) => n + apps.filter(a => pending(d, a)).length, 0);
   const bar = `<div class="card bar">
       <button class="btn primary" data-act="add-app">＋ Añadir app</button>
@@ -451,7 +466,7 @@ function catalogHtml({ apps, devices, auto, last }) {
       </div></div></td>
       ${devices.map(d => statusCell(d, a)).join('')}
       <td class="row-actions">
-        <button class="btn small" data-act="sync-app" ${devices.some(d => pending(d, a)) ? '' : 'disabled'}>${a.source === 'play' ? 'Abrir en Play' : 'Instalar en todos'}</button>
+        <button class="btn small" data-act="sync-app" ${devices.some(d => pending(d, a)) ? '' : 'disabled'}>${a.source === 'play' ? 'Abrir en Play' : 'Instalar donde falte'}</button>
         <button class="btn ghost icon small" data-act="rename-app" title="Cambiar el nombre">✎</button>
         <button class="btn ghost icon small danger" data-act="remove-app" title="Quitar de las apps comunes">✕</button>
       </td>
@@ -464,21 +479,56 @@ function catalogHtml({ apps, devices, auto, last }) {
     </table></div>
     <p class="legend muted small">
       <span><span class="st ok">✓</span> instalada</span><span><span class="st update">↑</span> hay versión nueva</span>
-      <span><span class="st missing">+</span> falta</span><span><span class="st missing">▶</span> abrir en Google Play</span>
-      <span><span class="st error">!</span> falló</span><span>· Pasa el ratón por una celda para ver detalles y púlsala para instalar.</span></p>`;
+      <span><span class="st missing">+</span> falta</span><span><span class="st missing">▶</span> falta, de Google Play</span>
+      <span><span class="st skip">–</span> ese móvil no la necesita</span><span><span class="st error">!</span> falló</span>
+      <span>· Pulsa una celda para instalarla, quitarla de ese móvil o marcar que no la necesita.</span></p>`;
 }
 
 function statusCell(d, a) {
   const s = d.status?.[a.pkg];
   if (!s) return `<td class="cell"><span class="none" title="${esc(d.status?.error || 'No se pudo leer el móvil')}">?</span></td>`;
-  if (s.state === 'ok') return `<td class="cell"><span class="st ok" title="Instalada${s.have ? ` (versión ${s.have})` : ''}">✓</span></td>`;
   const where = title(d);
-  const [label, tip] = s.error ? ['!', `Falló en ${where}: ${s.error}. Pulsa para reintentar`]
-    : s.state === 'update' ? ['↑', `Actualizar en ${where} (tiene la versión ${s.have})`]
-    : a.source === 'play' ? ['▶', `Abrir Google Play en ${where} para instalarla`]
-    : ['+', `Instalar en ${where}`];
-  return `<td class="cell" data-serial="${esc(d.serial)}"><button class="st ${s.error ? 'error' : s.state}" data-act="sync-cell"
-    title="${esc(tip)}" aria-label="${esc(tip)}">${label}</button></td>`;
+  const [label, kind, tip] = s.state === 'skip' ? (s.have != null
+    ? ['✓', 'skip', `Instalada en ${where}, aunque has dicho que no la necesita`] : ['–', 'skip', `${where} no la necesita: ni se instala ni se actualiza`])
+    : s.state === 'ok' ? ['✓', 'ok', `Instalada en ${where}${s.have ? ` (versión ${s.have})` : ''}`]
+    : s.error ? ['!', 'error', `Falló en ${where}: ${s.error}`]
+    : s.state === 'update' ? ['↑', 'update', `Hay versión nueva para ${where} (tiene la ${s.have})`]
+    : a.source === 'play' ? ['▶', 'missing', `Falta en ${where}; se instala desde Google Play`]
+    : ['+', 'missing', `Falta en ${where}`];
+  return `<td class="cell" data-serial="${esc(d.serial)}"><button class="st ${kind}" data-act="app-cell"
+    title="${esc(tip)}. Pulsa para elegir qué hacer" aria-label="${esc(tip)}">${label}</button></td>`;
+}
+
+// Una app común en un móvil: instalarla o ponerla al día, quitarla de ese móvil, o marcar si la necesita
+async function appCell(btn) {
+  const pkg = ctx(btn, 'pkg'), serial = ctx(btn, 'serial');
+  const a = state.catalog.apps.find(x => x.pkg === pkg), d = state.catalog.devices.find(x => x.serial === serial);
+  const s = d.status[pkg], play = a.source === 'play';
+  const screen = play ? '<p class="muted">Se abre Google Play en el móvil y su pantalla en el PC, para que pulses «Instalar».</p>' : '';
+  const [text, buttons] = s.state === 'skip' ? (s.have != null
+    ? ['<p>Está instalada, aunque has dicho que este móvil no la necesita.</p>', [['uninstall', 'Desinstalarla', 'danger'], ['want', 'Sí la necesita', 'primary']]]
+    : [`<p>Este móvil no la necesita: ni se instala ni se actualiza.</p>${screen}`, [['add', 'Ponerla en este móvil', 'primary']]])
+    : s.state === 'ok' ? [`<p>Instalada${s.have ? ` (versión ${esc(s.have)})` : ''}.</p><p class="muted">«Quitarla» la desinstala de este móvil,
+        con sus datos, y deja de instalarse aquí. En los demás sigue igual.</p>`, [['remove', 'Quitarla de este móvil', 'danger']]]
+    : [`<p>${esc(s.error ? `Falló: ${s.error}` : s.state === 'update' ? `Tiene la versión ${s.have} y hay una nueva.` : 'No está instalada.')}</p>${screen}`,
+      [['skip', 'No la necesita'], ['install', play ? 'Abrir Google Play' : s.state === 'update' ? 'Actualizar' : 'Instalar', 'primary']]];
+  const choice = await choose(`${a.name} en ${title(d)}`, text, buttons);
+  if (!choice) return;
+  const want = on => post(`/catalog/${enc(pkg)}/want`, { serialno: d.serialno, on });
+  await busy(btn, async () => {
+    if (choice === 'install') return syncNow({ pkg, serial }, 'Instalando');
+    if (choice === 'add') {
+      await want(true);
+      return syncNow({ pkg, serial }, 'Instalando');
+    }
+    if (choice === 'remove' || choice === 'uninstall') {
+      toast((await post(`/devices/${enc(serial)}/apps/${enc(pkg)}/uninstall`)).message);
+      if (choice === 'remove') await want(false);
+    }
+    if (choice === 'skip') await want(false);
+    if (choice === 'want') await want(true);
+    await state.reload();
+  });
 }
 
 function othersHtml({ devices, keep }) {
@@ -568,7 +618,12 @@ async function syncNow(body, what) {
   if (!results.length) toast('Nada que hacer: ya estaba todo al día');
   const installed = done.length - play;
   if (installed) toast(`Listo: ${installed} ${installed === 1 ? 'app instalada o actualizada' : 'apps instaladas o actualizadas'}`);
-  if (play) toast(`Abierto Google Play en ${play} ${play === 1 ? 'móvil' : 'móviles'}: pulsa «Instalar» en la pantalla`);
+  if (play) toast(`Abierto Google Play en ${play} ${play === 1 ? 'móvil' : 'móviles'}: pulsa «Instalar» en su pantalla`);
+  // Y la pantalla de cada uno en el PC, para pulsarlo desde aquí
+  for (const serial of new Set(done.filter(r => r.message.includes('Google Play')).map(r => r.serial))) {
+    const d = deviceBy(serial);
+    post(`/devices/${enc(serial)}/screen`, { title: title(d) }).catch(e => toast(`${title(d)}: ${e.message}`, 'error'));
+  }
   for (const r of results.filter(x => !x.ok)) {
     toast(`${title(deviceBy(r.serial))}${r.pkg ? ` · ${names.get(r.pkg) || r.pkg}` : ''}: ${r.message}`, 'error');
   }
@@ -677,7 +732,7 @@ const isReady = d => d.state === 'device' && !d.error;
 const mmss = s => (s == null ? '' : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`);
 const mb = (action, label, tip, cls = '') => `<button class="btn ${cls}" data-act="music" data-action="${action}" title="${esc(tip)}">${label}</button>`;
 const SPEAKER_STATE = {
-  tap: ['Esperando un toque', 'diff', 'Chrome necesita que alguien toque la pantalla del móvil antes de dejar sonar la música. El panel lo hace solo al abrirlo; si no, tócala tú'],
+  tap: ['Esperando un toque', 'diff', 'Chrome necesita que alguien toque la pantalla del móvil antes de dejar sonar la música. El panel lo hace solo al abrirlo; si no, tócala tú o pulsa «Ver pantalla» y hazlo desde el PC'],
   idle: ['Listo', 'ok', ''],
   ready: ['Listo', 'ok', ''],
   loading: ['Cargando…', '', 'Está descargando la canción del PC'],
@@ -757,9 +812,13 @@ function speakerRow(d) {
       aria-label="Volumen de la música en ${esc(title(d))}"><span class="vol-val small">…</span></td>
     <td class="nowrap"><button class="btn small mute" data-act="mute"></button><button class="btn small" data-act="music"
       data-action="solo" title="Que suene solo en este móvil; los demás se quedan en silencio">Solo</button></td>
-    <td class="nowrap"><button class="btn small icon" data-act="delay" data-step="-10" title="${esc(tip)}" aria-label="Menos retraso">−</button><span
-      class="delay-val"></span><button class="btn small icon" data-act="delay" data-step="10" title="${esc(tip)}" aria-label="Más retraso">+</button></td>
-    <td class="row-actions"><button class="btn small primary" data-act="speaker-open" title="Abre la página de altavoz en Chrome en este móvil">Abrir altavoz</button></td>
+    <td class="nowrap"><button class="btn small icon" data-act="delay" data-step="-1" title="${esc(tip)}" aria-label="1 ms menos de retraso">−</button><input
+      type="number" class="delay-val" min="-1000" max="1000" step="1" title="${esc(tip)}. Puedes escribirlo, de −1000 a 1000"
+      aria-label="Retraso de ${esc(title(d))} en milisegundos"><span class="small">ms</span><button class="btn small icon" data-act="delay"
+      data-step="1" title="${esc(tip)}" aria-label="1 ms más de retraso">+</button></td>
+    <td class="row-actions"><button class="btn small" data-act="screen"
+      title="Ver y manejar su pantalla desde el PC: para desbloquearlo o tocar «Toca para activar el altavoz»">Ver pantalla</button><button
+      class="btn small primary" data-act="speaker-open" title="Abre la página de altavoz en Chrome en este móvil">Abrir altavoz</button></td>
   </tr>`;
 }
 
@@ -784,7 +843,16 @@ function updateMusic() {
       : room.phase === 'tap' ? SPEAKER_STATE.tap
       : room.error ? ['Error', 'bad', '']
       : SPEAKER_STATE[room.phase] || ['Conectado', '', ''];
-    const clock = room?.linked && room.rtt != null ? `<span class="muted small sp-clock" title="Lo que puede desviarse su reloj del del PC">±${Math.max(1, Math.round(room.rtt / 2))} ms</span>` : '';
+    // Sonando, lo que se ha ido de donde debería ir (lo corrige solo, acelerando o frenando un poco); si no, el margen de su reloj
+    const margin = room?.rtt != null ? `Su reloj puede desviarse ±${Math.max(1, Math.round(room.rtt / 2))} ms del del PC` : '';
+    const num = n => String(Math.abs(n)).replace('.', ',');
+    const drift = room?.off != null && `Va ${num(room.off)} ms ${room.off > 0 ? 'adelantado' : 'retrasado'} respecto a donde debería. `
+      + `Lo corrige solo, sin saltos: ahora va un ${num(room.speed || 0)} % más ${room.speed < 0 ? 'despacio' : 'deprisa'}. ${margin}. `
+      + `Recolocado de golpe ${room.fixes} ${room.fixes === 1 ? 'vez' : 'veces'}`
+      + (room.jitter != null ? `. Lo que baila la lectura de su audio: ±${num(room.jitter)} ms` : '');
+    const clock = !room?.linked ? ''
+      : room.phase === 'playing' && drift ? `<span class="muted small sp-clock" title="${esc(drift)}">desfase ${Math.round(Math.abs(room.off))} ms</span>`
+      : room.rtt != null ? `<span class="muted small sp-clock" title="${esc(margin)}">±${Math.max(1, Math.round(room.rtt / 2))} ms</span>` : '';
     tr.querySelector('.sp-state').innerHTML = `<span class="val ${kind}" title="${esc(tip)}">${esc(text)}</span>${clock}`
       + (room?.error ? `<div class="err-text small">${esc(room.error)}</div>` : '')
       + (room?.lan ? `<div class="muted small" title="Su Android es viejo: llega al PC por la wifi y Chrome no le deja mantener la pantalla encendida. Enchufado, con «Pantalla encendida mientras carga» (Ajustes), no se apaga">Por la wifi: déjalo enchufado</div>` : '');
@@ -794,8 +862,8 @@ function updateMusic() {
     mute.classList.toggle('off', !on);
     mute.title = on ? 'Silenciar este móvil' : 'Que vuelva a sonar';
     tr.classList.toggle('silenced', !on);
-    const delay = room?.delay || 0;
-    tr.querySelector('.delay-val').textContent = `${delay > 0 ? '+' : ''}${delay} ms`;
+    const delayInput = tr.querySelector('.delay-val');
+    if (document.activeElement !== delayInput) delayInput.value = room?.delay || 0;
     // Si ya funciona, el botón la recarga (por si algo va raro); si no, la abre
     const open = tr.querySelector('[data-act=speaker-open]');
     const working = Boolean(room?.linked && room.phase && room.phase !== 'tap' && !room.error);
@@ -859,6 +927,12 @@ function updateVolumes() {
     input.value = toPct(v.level, v.max);
     showVolume(input);
   }
+}
+
+// El retraso de un altavoz, de milisegundo en milisegundo con − y +, o escrito
+async function setDelay(el, ms) {
+  await post('/music/room', { id: ctx(el, 'id'), serial: ctx(el, 'serial'), delay: Math.round(ms) || 0 });
+  await refreshMusic();
 }
 
 async function setVolume(input) {
@@ -1108,7 +1182,7 @@ const actions = {
   'add-app': () => addAppDialog(),
   'sync-all': btn => busy(btn, () => syncNow({}, 'Instalando lo pendiente')),
   'sync-app': btn => busy(btn, () => syncNow({ pkg: ctx(btn, 'pkg') }, 'Instalando')),
-  'sync-cell': btn => busy(btn, () => syncNow({ pkg: ctx(btn, 'pkg'), serial: ctx(btn, 'serial') }, 'Instalando')),
+  'app-cell': appCell,
   'rename-app': renameApp,
   'remove-app': btn => busy(btn, async () => { if (await removeApp(ctx(btn, 'pkg'))) await state.reload(); }),
   auto: async btn => {
@@ -1135,8 +1209,7 @@ const actions = {
   seek: (bar, e) => seekTo(bar, e).catch(err => toast(err.message, 'error')),
   delay: btn => busy(btn, async () => {
     const id = ctx(btn, 'id');
-    await post('/music/room', { id, serial: ctx(btn, 'serial'), delay: (state.music.rooms[id]?.delay || 0) + Number(btn.dataset.step) });
-    await refreshMusic();
+    await setDelay(btn, (state.music.rooms[id]?.delay || 0) + Number(btn.dataset.step));
   }),
   screenshot: btn => busy(btn, () => showScreenshot(btn)),
   screen: btn => busy(btn, async () => {
@@ -1176,6 +1249,9 @@ view.addEventListener('input', e => {
 view.addEventListener('change', e => {
   if (e.target.matches('select.want')) setWant(e.target);
   if (e.target.matches('.vol')) setVolume(e.target);
+  if (e.target.matches('.delay-val')) {
+    setDelay(e.target, Number(e.target.value)).catch(err => toast(err.message, 'error')).finally(() => e.target.blur());
+  }
   if (e.target.matches('#shuffle, #sleep')) musicOption(e.target);
   if (e.target.matches('#song-files')) uploadSongs(e.target);
 });

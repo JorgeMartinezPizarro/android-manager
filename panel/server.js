@@ -203,6 +203,12 @@ on('POST', '/api/catalog/copy', async ({ body: { serial, pkg, name } }) => {
 
 on('POST', '/api/catalog/:pkg/rename', ({ params, body: { name } }) => (catalog.rename(params.pkg, name), {}));
 on('POST', '/api/catalog/:pkg/remove', ({ params }) => (catalog.remove(params.pkg), {}));
+// Si un móvil (por su número de serie) necesita esa app o no
+on('POST', '/api/catalog/:pkg/want', ({ params, body: { serialno, on: wanted } }) => {
+  need(SERIAL.test(serialno || ''), 'Móvil no válido');
+  catalog.setWanted(params.pkg, serialno, Boolean(wanted));
+  return {};
+});
 on('POST', '/api/catalog/auto', ({ body: { on: enabled } }) => {
   catalog.setAuto(enabled);
   if (enabled) sync.run({ auto: true }).catch(() => {}); // empieza ya, sin esperar a la próxima vuelta

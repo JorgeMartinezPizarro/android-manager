@@ -24,11 +24,12 @@ async function targets(apps) {
   return out;
 }
 
-// pkg → { state: ok | update | missing, have, error }
+// pkg → { state: ok | update | missing | skip (este móvil no la necesita), have, error }
 async function deviceStatus(d, apps, want) {
   const have = await adb.versions(d.serial, apps.map(a => a.pkg));
   return Object.fromEntries(apps.map(a => {
     const v = have[a.pkg];
+    if (a.skip?.includes(d.serialno)) return [a.pkg, { state: 'skip', have: v ?? null }];
     const state = v === undefined ? 'missing' : v < want[a.pkg].versionCode ? 'update' : 'ok';
     const error = state === 'ok' ? undefined : failures.get(failKey(d, a.pkg, want[a.pkg].versionCode));
     return [a.pkg, { state, have: v ?? null, error }];
@@ -69,7 +70,7 @@ async function doSync({ pkg, serial, auto }) {
     for (const a of apps) { // de una en una por móvil; los móviles van en paralelo
       const { state } = st[a.pkg];
       const key = failKey(d, a.pkg, want[a.pkg].versionCode);
-      if (state === 'ok' || (auto && failures.has(key))) continue;
+      if (state === 'ok' || state === 'skip' || (auto && failures.has(key))) continue;
       try {
         const message = a.source === 'play'
           ? await adb.openStore(d.serial, a.pkg)
