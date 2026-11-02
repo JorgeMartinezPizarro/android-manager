@@ -3,7 +3,25 @@
 Panel web para ver y gestionar las apps de los móviles Android de casa desde el PC. Habla con ellos
 por adb, igual que `droids.sh`, y usa los mismos ficheros, así que puedes usar uno u otro.
 
-## Arrancar
+## Instalar en Windows
+
+`MisAndroid-Setup.exe` lo instala todo de una vez. Lleva dentro sus propias copias de Node.js, adb y scrcpy, así que no
+depende de lo que tenga el PC (ni de nvm) ni hay que instalar nada antes. Se instala para tu usuario, sin permisos de
+administrador, en `%LOCALAPPDATA%\Programs\Mis Android`. Crea «Mis Android» en el menú Inicio y, si quieres, en el
+escritorio, y puede arrancar el panel solo al entrar en Windows (en una ventana minimizada, sin abrir el navegador).
+
+- Como no está firmado, Windows avisa con «Windows protegió tu PC»: «Más información» → «Ejecutar de todas formas».
+- Para actualizar, instala la versión nueva encima: para el panel si está en marcha y conserva tus datos.
+- Se quita desde Configuración → Aplicaciones → Mis Android. Para el panel y pregunta si borra también tus datos.
+- Si en ese PC hay otro adb de otra versión en marcha (el de Android Studio, por ejemplo), cada uno reinicia el del
+  otro y se caen las conexiones por wifi: usa uno solo.
+
+**Hacer el instalador** (desde el código): `npm run instalador`. Necesita [Inno Setup](https://jrsoftware.org/isinfo.php)
+(`winget install JRSoftware.InnoSetup`). La primera vez descarga Node.js y scrcpy, que trae adb, de sus páginas oficiales.
+Las versiones son fijas, están en `instalador/construir.js` y se comprueban con su SHA-256. Deja
+`instalador/salida/MisAndroid-Setup.exe` (unos 33 MB): pásalo por USB o por la nube, o súbelo a las Releases de GitHub.
+
+## Arrancar desde el código
 
 1. Instala adb (una vez), desde una terminal:
 
@@ -14,8 +32,9 @@ por adb, igual que `droids.sh`, y usa los mismos ficheros, así que puedes usar 
    También vale descargar las [SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)
    y descomprimirlas aquí, de forma que quede `platform-tools\adb.exe`.
 
-2. Doble clic en `panel.cmd` (o `npm start`). Se abre http://localhost:8765 en el navegador.
-   Cierra la ventana negra para pararlo. Si ya estaba en marcha, `panel.cmd` solo lo abre en el navegador.
+2. Con [Node.js](https://nodejs.org) 22 o más nuevo, doble clic en `panel.cmd` (o `npm start`). Se abre
+   http://localhost:8765 en el navegador. Cierra la ventana negra para pararlo. Si ya estaba en marcha, `panel.cmd` solo
+   lo abre en el navegador.
 
 Para que arranque solo cada vez que entres en Windows (en una terminal minimizada), doble clic en
 `arranque-automatico.bat`. Otro doble clic lo quita.
@@ -50,7 +69,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
 - **Dispositivos**: los móviles conectados con batería, conexión y un nombre que tú eliges.
   **Ver pantalla** abre la pantalla del móvil en una ventana del PC (por wifi tarda unos segundos) y lo manejas
   con el ratón y el teclado. La ventana sigue abierta aunque cierres el panel.
-  Usa [scrcpy](https://github.com/Genymobile/scrcpy), que se instala una vez con `winget install Genymobile.scrcpy`.
+  Usa [scrcpy](https://github.com/Genymobile/scrcpy): el instalador lo lleva dentro; desde el código, se instala una
+  vez con `winget install Genymobile.scrcpy`.
 - **Ficha de cada móvil** («Controlar»):
   - **Acciones rápidas**: encender, desbloquear y apagar la pantalla, captura, girarla (horizontal, vertical o
     sola), abrir el calendario, volumen de la música, canción anterior / play / siguiente, abrir un enlace en el
@@ -136,7 +156,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
 ## Ficheros
 
 Todo lo tuyo está en la carpeta `datos/`, que git no ve: en una copia nueva del proyecto (la de un amigo, por ejemplo)
-el panel arranca vacío y la va llenando. Para llevarte tu configuración a otro PC, copia `datos/` entera, con el panel
+el panel arranca vacío y la va llenando. Con el instalador, `datos\` está en la carpeta donde se instaló
+(`%LOCALAPPDATA%\Programs\Mis Android\datos`). Para llevarte tu configuración a otro PC, copia `datos/` entera, con el panel
 cerrado. Las versiones anteriores guardaban estos ficheros junto al proyecto; el panel los mueve a `datos/` al arrancar.
 
 | Fichero en `datos/` | Para qué |

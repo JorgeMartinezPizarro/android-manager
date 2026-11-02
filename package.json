@@ -4,7 +4,8 @@
   "description": "Panel web para gestionar las apps de los Android de casa con adb",
   "scripts": {
     "start": "node panel/server.js --open",
-    "demo": "node panel/demo.js"
+    "demo": "node panel/demo.js",
+    "instalador": "node instalador/construir.js"
   },
   "engines": {
     "node": ">=22"

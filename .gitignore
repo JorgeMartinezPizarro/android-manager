@@ -15,3 +15,10 @@ debloat/
 
 # Ajustes locales de Claude Code
 .claude/
+
+# adb descomprimido a mano en la carpeta del proyecto (mira el README)
+platform-tools/
+
+# Lo que descarga y genera «npm run instalador»
+instalador/vendor/
+instalador/salida/
