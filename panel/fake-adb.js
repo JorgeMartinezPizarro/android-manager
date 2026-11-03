@@ -153,7 +153,7 @@ function shell(p, c) {
   if ((m = c.match(/^monkey -p (\S+) /))) return (app(p, m[1]), out('Events injected: 1'));
   if ((m = c.match(/^dumpsys package (\S+)/))) {
     const a = p.apps[m[1]];
-    return a && !a.removed ? out(`    versionCode=${a.versionCode || 1} minSdk=21 targetSdk=33`) : undefined;
+    return a && !a.removed ? out(`    versionCode=${a.versionCode || 1} minSdk=21 targetSdk=33\n    versionName=${m[1] === 'com.android.chrome' ? '120.0.6099.230' : '1.0'}`) : undefined;
   }
   if ((m = c.match(/^am start .*details\?id=([\w.]+)/))) return out(`Starting: Intent { act=android.intent.action.VIEW dat=market://details?id=${m[1]} }`);
   // El reloj solo deja poner temporizadores en los Android 12 o más nuevos (como el OPPO de verdad)
@@ -175,12 +175,13 @@ function shell(p, c) {
   if ((m = c.match(/^input keyevent (.+)$/))) {
     if (m[1].includes('KEYCODE_SLEEP')) p.screen = 'off';
     if (m[1].includes('KEYCODE_WAKEUP')) p.screen = 'on';
+    if (m[1].includes('KEYCODE_POWER')) p.screen = p.screen === 'off' ? 'on' : 'off';
     return;
   }
   if (c === 'sleep 1' || c === 'wm dismiss-keyguard') return;
   if (c === 'wm size') return out('Physical size: 1080x2340');
   if (c.startsWith('dumpsys window policy')) return out(`showing=${p.screen === 'off'} mIsShowing=${p.screen === 'off'}`);
-  if (/^input tap \d+ \d+$/.test(c)) return;
+  if (/^input (tap \d+ \d+|swipe \d+ \d+ \d+ \d+)$/.test(c)) return;
   if ((m = c.match(/^(?:media|cmd media_session) volume --stream 3 (.+)$/))) return volumeCmd(p, m[1]);
   // Android 8 o anterior: setStreamVolume del servicio de audio
   if ((m = c.match(/^service call audio 3 i32 3 i32 (\d+) /))) return (p.volume = Math.min(15, Number(m[1])), out("Result: Parcel(00000000    '....')"));

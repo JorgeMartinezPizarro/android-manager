@@ -366,6 +366,68 @@ async function showScreenshot(btn) {
   dlg.showModal();
 }
 
+// «Ver pantalla» abre scrcpy en una ventana del PC; en Android 4, que scrcpy no aguanta, el panel responde viewer
+async function openScreen(d) {
+  const res = await post(`/devices/${enc(d.serial)}/screen`, { title: title(d) });
+  if (res.viewer) showViewer(d);
+  return res;
+}
+
+// El visor de los Android viejos: una captura tras otra mientras esté abierto. Un clic es un toque y arrastrar es
+// deslizar el dedo; el móvil los hace en píxeles de la captura
+function showViewer(d) {
+  const dlg = $('#dialog');
+  dlg.className = 'wide';
+  dlg.innerHTML = `<form method="dialog">
+      <h2>Pantalla de ${esc(title(d))}</h2>
+      <div class="viewer"><img class="shot" draggable="false" alt="Pantalla de ${esc(title(d))}"></div>
+      <p class="muted small">Android ${esc(d.android)} no deja abrirla en una ventana: aquí se ve a base de capturas, que tardan
+        un par de segundos. Haz clic para tocar y arrastra para deslizar el dedo; el móvil tarda un poco en hacerlo.
+        Si se ve negra, la pantalla está apagada o descansando: tócala.</p>
+      <menu><button class="btn" type="button" data-key="back">Atrás</button><button class="btn" type="button" data-key="home">Inicio</button><button
+        class="btn" type="button" data-key="power">Encender / apagar</button><button class="btn primary" value="close">Cerrar</button></menu>
+    </form>`;
+  const img = dlg.querySelector('.shot'), fail = e => toast(`${title(d)}: ${e.message}`, 'error');
+  const point = e => {
+    const r = img.getBoundingClientRect(), clamp = (v, max) => Math.max(0, Math.min(max - 1, Math.round(v * max)));
+    return { x: clamp((e.clientX - r.left) / r.width, img.naturalWidth), y: clamp((e.clientY - r.top) / r.height, img.naturalHeight) };
+  };
+  // Un círculo donde se ha tocado, porque el móvil tarda en reaccionar
+  const mark = e => {
+    const box = img.parentElement.getBoundingClientRect(), dot = document.createElement('i');
+    dot.className = 'dot';
+    dot.style.left = `${e.clientX - box.left}px`;
+    dot.style.top = `${e.clientY - box.top}px`;
+    img.parentElement.append(dot);
+    setTimeout(() => dot.remove(), 1200);
+  };
+  let from = null;
+  img.addEventListener('pointerdown', e => { e.preventDefault(); if (img.naturalWidth) from = point(e); });
+  img.addEventListener('pointerup', e => {
+    if (!from) return;
+    const to = point(e), start = from;
+    from = null;
+    mark(e);
+    const swipe = Math.hypot(to.x - start.x, to.y - start.y) > img.naturalWidth * 0.03;
+    post(`/devices/${enc(d.serial)}/touch`, swipe ? { ...start, x2: to.x, y2: to.y } : start).catch(fail);
+  });
+  for (const btn of dlg.querySelectorAll('[data-key]')) {
+    btn.addEventListener('click', () => post(`/devices/${enc(d.serial)}/do/${btn.dataset.key}`).catch(fail));
+  }
+  dlg.showModal();
+  (async () => {
+    while (img.isConnected && dlg.open) {
+      try {
+        img.src = (await api(`/devices/${enc(d.serial)}/screenshot`)).image;
+      } catch (e) {
+        if (img.isConnected && dlg.open) fail(e);
+        return;
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+  })();
+}
+
 function renderRows() {
   const q = state.query.trim().toLowerCase();
   const mine = state.apps.filter(a => !a.system && a.installed).length;
@@ -788,7 +850,7 @@ async function syncNow(body, what) {
   // Y la pantalla de cada uno en el PC, para pulsarlo desde aquí
   for (const serial of new Set(done.filter(r => r.message.includes('Google Play')).map(r => r.serial))) {
     const d = deviceBy(serial);
-    post(`/devices/${enc(serial)}/screen`, { title: title(d) }).catch(e => toast(`${title(d)}: ${e.message}`, 'error'));
+    openScreen(d).catch(e => toast(`${title(d)}: ${e.message}`, 'error'));
   }
   for (const r of results.filter(x => !x.ok)) {
     toast(`${title(deviceBy(r.serial))}${r.pkg ? ` · ${names.get(r.pkg) || r.pkg}` : ''}: ${r.message}`, 'error');
@@ -1456,11 +1518,11 @@ const actions = {
   }),
   'speaker-open': btn => busy(btn, () => openSpeakers([deviceBy(ctx(btn, 'serial'))], btn.dataset.again === '1')),
   'speaker-all': btn => busy(btn, () => openSpeakers(state.devices.filter(isReady))),
-  // La pantalla de cada móvil en una ventana del PC (scrcpy), todas a la vez
+  // La pantalla de cada móvil en una ventana del PC (scrcpy), todas a la vez; la de un Android 4, en el visor del panel
   'screen-all': btn => busy(btn, async () => {
     const list = state.devices.filter(isReady);
     if (!list.length) return toast('No hay móviles listos', 'error');
-    const results = await Promise.all(list.map(d => post(`/devices/${enc(d.serial)}/screen`, { title: title(d) })
+    const results = await Promise.all(list.map(d => openScreen(d)
       .then(() => ({ d, ok: true }), e => ({ d, ok: false, message: e.message }))));
     const ok = results.filter(r => r.ok).length;
     if (ok) toast(`Abriendo en el PC la pantalla de ${ok === 1 ? title(results.find(r => r.ok).d) : `${ok} móviles`}`);
@@ -1490,7 +1552,8 @@ const actions = {
   screenshot: btn => busy(btn, () => showScreenshot(btn)),
   screen: btn => busy(btn, async () => {
     const d = deviceBy(ctx(btn, 'serial'));
-    toast((await post(`/devices/${enc(d.serial)}/screen`, { title: title(d) })).message);
+    const { message } = await openScreen(d);
+    if (message) toast(message);
   }),
   qr: btn => busy(btn, async () => { showQr(await post('/qr')); }),
   wifi: btn => busy(btn, async () => {

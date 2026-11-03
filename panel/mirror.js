@@ -30,9 +30,14 @@ function scrcpyPath() {
   return candidates.find(c => c && fs.existsSync(c)) || null;
 }
 
+// scrcpy necesita Android 5: en uno más viejo su servidor revienta en el móvil («Segmentation fault»). Ahí la pantalla
+// se ve en el propio panel, a base de capturas ({ viewer: true })
+const MIN_SDK = 21;
+
 // Si scrcpy no se cierra enseguida es que va bien (por wifi la ventana tarda 5-10 s en salir);
 // si se cierra, su primer error dice por qué
-function open(serial, title) {
+async function open(serial, title) {
+  if (await adb.sdkOf(serial) < MIN_SDK) return { viewer: true };
   const bin = scrcpyPath();
   if (!bin) throw new Error(MISSING);
   const adbBin = adb.adbPath();
@@ -47,7 +52,7 @@ function open(serial, title) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       child.unref();
-      resolve('En unos segundos se abre su pantalla en una ventana aparte: con el ratón lo manejas como si la tocaras');
+      resolve({ message: 'En unos segundos se abre su pantalla en una ventana aparte: con el ratón lo manejas como si la tocaras' });
     }, 2500);
     child.on('error', e => { clearTimeout(timer); reject(e); });
     child.on('exit', code => {

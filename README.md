@@ -71,7 +71,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
   **Ver pantalla** abre la pantalla del móvil en una ventana del PC (por wifi tarda unos segundos) y lo manejas
   con el ratón y el teclado. La ventana sigue abierta aunque cierres el panel.
   Usa [scrcpy](https://github.com/Genymobile/scrcpy): el instalador lo lleva dentro; desde el código, se instala una
-  vez con `winget install Genymobile.scrcpy`.
+  vez con `winget install Genymobile.scrcpy`. scrcpy necesita Android 5: en uno más viejo la pantalla se ve dentro del
+  panel a base de capturas (una cada segundo o dos), y un clic es un toque y arrastrar, deslizar el dedo.
 - **Ficha de cada móvil** («Controlar»):
   - **Acciones rápidas**: encender, desbloquear y apagar la pantalla, captura, girarla (horizontal, vertical o
     sola), abrir el calendario, volumen de la música, canción anterior / play / siguiente, abrir un enlace en el

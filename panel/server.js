@@ -141,10 +141,12 @@ on('GET', '/api/devices/:serial/screenshot', async ({ params }) => ({
   image: `data:image/png;base64,${(await adb.screenshot(params.serial)).toString('base64')}`,
 }));
 
-// El título es el nombre del móvil, para la ventana de scrcpy
-on('POST', '/api/devices/:serial/screen', async ({ params, body: { title } }) => ({
-  message: await mirror.open(params.serial, String(title || '').replace(/[^\p{L}\p{N} ._()-]/gu, '').slice(0, 60)),
-}));
+// El título es el nombre del móvil, para la ventana de scrcpy. En Android 4 responde { viewer: true }: el visor del panel
+on('POST', '/api/devices/:serial/screen', ({ params, body: { title } }) =>
+  mirror.open(params.serial, String(title || '').replace(/[^\p{L}\p{N} ._()-]/gu, '').slice(0, 60)));
+
+// Los toques del visor, en píxeles de la captura
+on('POST', '/api/devices/:serial/touch', async ({ params, body }) => (await adb.touch(params.serial, body), {}));
 
 // keep: la app está en el catálogo de apps comunes; note: el nombre que le has dado
 const common = () => new Map(catalog.load().apps.map(a => [a.pkg, a.name]));

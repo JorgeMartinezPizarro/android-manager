@@ -2,6 +2,7 @@
 'use strict';
 const { execFile, spawn } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const EXE = process.platform === 'win32' ? 'adb.exe' : 'adb';
@@ -280,29 +281,40 @@ async function volume(serial, adj) {
 
 // El volumen de la música tal como lo cuenta el propio Android (dumpsys audio): rápido y igual en todas las versiones.
 // Cada salida (altavoz, auriculares…) tiene el suyo; vale el de la que está en uso
-async function musicVolume(serial) {
-  const block = (await shell(serial, 'dumpsys audio')).split(/\n- STREAM_/).find(b => b.startsWith('MUSIC:'));
+async function readVolume(serial) {
+  const [dump, steps = ''] = (await shell(serial, 'dumpsys audio; echo @@; getprop ro.config.media_vol_steps')).split('@@\n');
+  const block = dump.split(/\n- STREAM_/).find(b => b.startsWith('MUSIC:'));
+  // Android 4.x no dice el máximo ni el nombre de la salida: «Current: 2: 6, 10000: 6…», donde 2 es el altavoz.
+  // El máximo es el de fábrica (15) salvo que el fabricante lo cambie en ro.config.media_vol_steps
+  const old = !/Max: \d+/.test(block || '') && block?.match(/Current: 2: (\d+)/);
+  if (old) return { level: Number(old[1]), max: Number(steps.trim()) || 15, old: true };
   const max = Number(block?.match(/Max: (\d+)/)?.[1]);
   if (!max) throw new Error('El móvil no dice su volumen');
   const device = block.match(/Devices: (\w+)/)?.[1] || 'speaker';
   const level = block.match(new RegExp(`\\(${device}\\): (\\d+)`)) || block.match(/streamVolume:(\d+)/);
   return { level: Number(level?.[1] ?? 0), max };
 }
+const musicVolume = async serial => (({ level, max }) => ({ level, max }))(await readVolume(serial));
 
 // Sin «media volume» (Android 8 o anterior), setStreamVolume del servicio de audio, que es su llamada 3 hasta Android 9.
-// Se comprueba leyéndolo después
+// En Android 4.x esa llamada es otra cosa: ahí se pulsa la tecla de volumen las veces que haga falta (una por «input»,
+// que en esos Android no acepta varias), y solo mueve la música mientras suena. Se comprueba leyéndolo después
 async function setMusicVolume(serial, value) {
-  const [{ max }, sdk] = await Promise.all([musicVolume(serial), sdkOf(serial)]);
+  const [{ level: was, max, old }, sdk] = await Promise.all([readVolume(serial), sdkOf(serial)]);
   const level = Math.max(0, Math.min(max, Math.round(Number(value))));
   if (!Number.isFinite(level)) throw new Error('Volumen no válido');
   const tool = volumeTool(sdk);
+  const keys = n => Array(Math.abs(n)).fill(`input keyevent ${n > 0 ? 24 : 25}`).join('; ');
   try {
-    check(await shell(serial, tool ? `${tool} --set ${level} 2>&1` : `service call audio 3 i32 3 i32 ${level} i32 0 s16 com.android.shell 2>&1`));
+    if (old) await shell(serial, keys(level - was) || 'true', { timeout: 120000 }); // unos 4 s por pulsación
+    else check(await shell(serial, tool ? `${tool} --set ${level} 2>&1` : `service call audio 3 i32 3 i32 ${level} i32 0 s16 com.android.shell 2>&1`));
   } catch (e) {
     throw blocked(e);
   }
   const now = await musicVolume(serial);
-  if (now.level !== level) throw new Error(`El móvil no ha cambiado el volumen (sigue en ${now.level} de ${now.max})`);
+  if (now.level !== level) {
+    throw new Error(`El móvil no ha cambiado el volumen (sigue en ${now.level} de ${now.max})${old ? ': en este Android solo se cambia mientras suena la música' : ''}`);
+  }
   return now;
 }
 
@@ -386,6 +398,10 @@ const KEYS = {
   playPause: ['KEYCODE_MEDIA_PLAY_PAUSE', 'Play / pausa'],
   previous: ['KEYCODE_MEDIA_PREVIOUS', 'Canción anterior'],
   next: ['KEYCODE_MEDIA_NEXT', 'Canción siguiente'],
+  // Los botones del visor de pantalla; KEYCODE_WAKEUP no existe hasta Android 4.4W, el de encendido sí
+  back: ['KEYCODE_BACK', 'Atrás'],
+  home: ['KEYCODE_HOME', 'Inicio'],
+  power: ['KEYCODE_POWER', 'Botón de encendido'],
 };
 
 const QUICK = {
@@ -421,21 +437,32 @@ async function quick(serial, action, body = {}) {
 // ── Altavoces: la página de música del panel abierta en Chrome ──
 
 // adb reverse lleva un puerto del móvil al mismo del PC por la conexión de adb: el móvil abre http://localhost:<port>
-// sin que el panel tenga que escuchar en la wifi. El adb de Android 7 lo rechaza por wifi («more than one device»): oldAdb
+// sin que el panel tenga que escuchar en la wifi. El adb de Android 7 lo rechaza por wifi («more than one device») y el de
+// Android 4, que no lo tiene, corta («closed»): oldAdb
 const reverse = (serial, port) => run(['-s', serial, 'reverse', `tcp:${port}`, `tcp:${port}`]).catch(e => {
-  if (/more than one device/.test(e.message)) e.oldAdb = true;
+  if (/more than one device|error: closed/.test(e.message)) e.oldAdb = true;
   throw e;
 });
 
 const wifiIp = async serial => (await shell(serial, 'ip -f inet addr show wlan0')).match(/inet (\d+\.\d+\.\d+\.\d+)/)?.[1] || null;
 
-// application_id: Chrome reutiliza la pestaña que abrió antes para la misma app en vez de abrir otra cada vez
+// La página de altavoz usa async/await y padStart: Chrome 57 o más nuevo
+const CHROME_MIN = 57;
+
+// application_id: Chrome reutiliza la pestaña que abrió antes para la misma app en vez de abrir otra cada vez.
+// El am de Android 4.3 o anterior no entiende -p: ahí Chrome se nombra por su actividad
 async function openSpeaker(serial, url) {
+  const chrome = Number((await shell(serial, 'dumpsys package com.android.chrome')).match(/versionName=(\d+)/)?.[1]);
+  if (!chrome) throw new Error('Este móvil no tiene Chrome, que es lo que hace de altavoz');
+  if (chrome < CHROME_MIN) throw new Error(`Tiene Chrome ${chrome} y para hacer de altavoz hace falta el ${CHROME_MIN} o más nuevo: actualízalo desde Play Store`);
+  const start = target => shell(serial, 'input keyevent KEYCODE_WAKEUP 2>&1; wm dismiss-keyguard 2>&1; am start -a android.intent.action.VIEW '
+    + `-d ${quote(url)} ${target} --es com.android.browser.application_id mis-android 2>&1`);
   try {
-    check(await shell(serial, 'input keyevent KEYCODE_WAKEUP 2>&1; wm dismiss-keyguard 2>&1; am start -a android.intent.action.VIEW '
-      + `-d ${quote(url)} -p com.android.chrome --es com.android.browser.application_id mis-android 2>&1`));
+    let out = await start('-p com.android.chrome');
+    if (/Unknown option: -p/.test(out)) out = await start('-n com.android.chrome/com.google.android.apps.chrome.Main');
+    check(out);
   } catch (e) {
-    throw /unable to resolve/i.test(e.message) ? new Error('Este móvil no tiene Chrome, que es lo que hace de altavoz') : blocked(e);
+    throw blocked(e);
   }
 }
 
@@ -454,11 +481,36 @@ async function tapScreen(serial) {
   }
 }
 
-// Captura en PNG; con la pantalla apagada sale negra
+// Captura en PNG; con la pantalla apagada sale negra. El adb de Android 4 no tiene exec-out (corta: «closed») y por
+// shell los bytes llegan con los saltos de línea cambiados: ahí se guarda en el móvil y se trae con pull
+const noExecOut = new Set();
 async function screenshot(serial) {
-  const png = await run(['-s', serial, 'exec-out', 'screencap', '-p'], { binary: true });
+  let png = noExecOut.has(serial) ? null : await run(['-s', serial, 'exec-out', 'screencap', '-p'], { binary: true }).catch(e => {
+    if (!/error: closed/.test(e.message)) throw e;
+    noExecOut.add(serial);
+    return null;
+  });
+  if (!png) {
+    const remote = '/data/local/tmp/panel-captura.png', local = path.join(os.tmpdir(), `panel-captura-${process.pid}-${Date.now()}.png`);
+    check(await shell(serial, `screencap -p ${remote} 2>&1`));
+    await run(['-s', serial, 'pull', remote, local]);
+    png = fs.readFileSync(local);
+    fs.rmSync(local, { force: true });
+  }
   if (png.subarray(0, 4).toString('latin1') !== '\x89PNG') throw new Error('El móvil no ha devuelto la captura');
   return png;
+}
+
+// Un toque, o un deslizamiento si (x2, y2) es otro punto, en píxeles de la captura: para el visor de los Android viejos
+async function touch(serial, { x, y, x2 = x, y2 = y }) {
+  const p = [x, y, x2, y2].map(v => Math.round(Number(v)));
+  if (p.some(v => !(v >= 0 && v <= 10000))) throw new Error('Ese punto no está en la pantalla');
+  const swipe = p[0] !== p[2] || p[1] !== p[3];
+  try {
+    check(await shell(serial, `input ${swipe ? `swipe ${p.join(' ')}` : `tap ${p[0]} ${p[1]}`} 2>&1`));
+  } catch (e) {
+    throw blocked(e);
+  }
 }
 
 async function connect(host) {
@@ -513,23 +565,24 @@ async function pairQr(name, password) {
   }
 }
 
-// Pone adb del móvil a escuchar por wifi en el 5555 y se conecta; devuelve la IP
+// Pone adb del móvil a escuchar por wifi en el 5555 y se conecta; devuelve la IP. Los Android viejos (4.x) cortan el
+// cable antes de contestar y adb da «error: closed» aunque haya funcionado: el error solo cuenta si luego no conecta
 async function enableWifi(serial) {
   const { ip } = await info(serial);
   if (!ip) throw new Error('El móvil no tiene IP: conéctalo antes a la wifi');
-  await run(['-s', serial, 'tcpip', '5555']);
+  const switched = await run(['-s', serial, 'tcpip', '5555']).then(() => null, e => e);
   for (let i = 1; ; i++) {
     await sleep(1500); // adbd tarda un poco en reiniciarse en modo red
     try {
       await connect(ip);
       return ip;
     } catch {
-      if (i === 5) throw new Error(`El móvil no acepta la conexión por wifi en ${ip}: comprueba que está en la misma wifi que el PC`);
+      if (i === 5) throw switched || new Error(`El móvil no acepta la conexión por wifi en ${ip}: comprueba que está en la misma wifi que el PC`);
     }
   }
 }
 
 module.exports = {
-  PKG, adbPath, startServer, serials, devices, apps, appAction, versions, install, openStore, pullApk, awake,
-  readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, reverse, wifiIp, openSpeaker, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
+  PKG, adbPath, sdkOf, startServer, serials, devices, apps, appAction, versions, install, openStore, pullApk, awake,
+  readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, touch, reverse, wifiIp, openSpeaker, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
 };
