@@ -445,7 +445,9 @@ function updateLan() {
 function lanStatus() {
   const listening = privateIps().filter(i => lanServers.has(i.address));
   const real = listening.filter(i => !i.virtual);
-  return { on: lanOn, urls: (real.length ? real : listening).map(i => `http://${i.address}:${PORT}`) };
+  const urls = (real.length ? real : listening).map(i => `http://${i.address}:${PORT}`);
+  // qr: para abrir la música desde un móvil apuntándole con la cámara, sin escribir la dirección
+  return { on: lanOn, urls, qr: lanOn && urls.length ? qrSvg(`${urls[0]}/#/music`) : null };
 }
 
 on('GET', '/api/red', () => lanStatus());

@@ -93,7 +93,9 @@ Consejo: reserva en el router una IP fija para cada móvil.
   ! falló). Pulsa una celda para elegir: instalarla o ponerla al día en ese móvil, marcar que no la necesita (ahí ni se
   instala ni se actualiza), quitarla de ese móvil (la desinstala y la marca) o volver a ponerla. Los móviles que lleguen
   nuevos la llevan. «Poner (n)», en la cabecera de un móvil, le instala las que le faltan; «Instalar lo pendiente», todo
-  lo que falta en todos. «Quitar…» la deja de tener como favorita y, si quieres, la desinstala de todos. Cada favorita
+  lo que falta en todos. En cada fila, cuando le falta a algún móvil, sale un botón para ponerla donde falte (la flecha
+  de descarga, o ▶ si es de Google Play, que se abre en esos móviles); el lápiz le cambia el nombre y la papelera la deja
+  de tener como favorita y, si quieres, la desinstala de todos. Cada favorita
   viene de uno de estos sitios:
   - **APK propio**: lo subes tú, o lo copias de un móvil donde ya esté (solo apps de una pieza, como tus
     apps privadas). Se instala tal cual; si subes una versión nueva, se actualiza en todos.
@@ -125,7 +127,7 @@ Consejo: reserva en el router una IP fija para cada móvil.
   tarda distinto en obedecer (de 0,2 a 3 s): todos ajustan su reloj con el del PC y el PC les dice a qué hora exacta
   empieza la canción. Mientras suena, cada uno mide cada pocos segundos cuánto se ha ido de donde debería estar y lo corrige
   solo, acelerando o frenando un poco (como mucho un 0,5 %, que no se nota en el tono); solo si se va más de 30 ms se recoloca
-  de golpe. En el panel, junto a «Sonando», sale su **desfase** en ese momento.
+  de golpe. En el panel, junto a «Sonando», sale su desfase en ese momento (**+n ms** si va adelantado, **−n ms** si va retrasado).
   - Las canciones son las de la carpeta `datos/musica/` (y sus subcarpetas): súbelas desde el panel o cópialas ahí.
     Valen mp3, m4a, aac, ogg, opus, wav y flac. Al acabar una suena la siguiente, y tras la última, otra vez la primera.
     Se eligen con **Canciones**, que las muestra a pantalla completa con un buscador (sin tildes ni mayúsculas; Enter
@@ -146,9 +148,20 @@ Consejo: reserva en el router una IP fija para cada móvil.
   - La que va a sonar después sale debajo del título («Después: …») y los móviles la van preparando mientras suena la
     actual: la descargan enseguida y la descomprimen en sus últimos 45 s (descomprimida ocupa mucho, y los móviles viejos
     tienen poca memoria). Así pasan de una canción a otra sin esperar a que cargue. En aleatorio se elige de antemano.
+  - **Modo ligero** (solo en Android 4, como el tablet SM-T110): allí descomprimir la canción entera (unos 80 MB, y otro
+    tanto mientras se convierte) dejaba a Chrome sin memoria. La página se da cuenta sola y la escucha con un `<audio>`,
+    que la va leyendo a trozos; se mantiene a la par mirando por dónde va, acelerando o frenando como mucho un 1 % (sin
+    cambiar el tono) o, si se ha ido más de un cuarto de segundo, volviendo a arrancar donde toca. `?ligero` en la
+    dirección de la página lo fuerza en cualquier móvil y `?ligero=0` lo quita.
   - **Prueba de sincronía**: un pitido por segundo. Si un móvil se oye antes que los demás, súbele el **retraso**;
     si se oye después, bájalo. Va de milisegundo en milisegundo con − y +, o escribe el número. Un altavoz Bluetooth suele
     ir un poco por detrás: ese móvil, con retraso negativo.
+  - **Calibrar** lo hace con el micrófono del PC en vez de a oído: hace sonar uno a uno los altavoces encendidos (los
+    silenciados no se tocan) con un barrido corto cada segundo, lo graba y busca cuándo llega cada barrido, con menos de
+    1 ms de error aunque haya eco. Lo que tarda el micrófono es igual para todos y se anula, así que queda cuánto antes o
+    después se oye cada uno desde donde está el micrófono: ponlo donde escuchas. Al acabar enseña lo medido y los
+    retrasos que los cuadran («Aplicar» los pone), y la música vuelve por donde iba. Unos 10 s por altavoz; el que va en
+    modo ligero, hasta 45 s, porque tarda más en cuadrarse al arrancar. El navegador pide permiso para el micrófono.
   - La página del altavoz ocupa toda la pantalla de cada móvil y hace de mando: arriba la canción (en una línea: si no
     cabe, se desliza despacio para enseñarla entera; con el artista debajo y por dónde va) y los botones de anterior, pausa y siguiente, que valen para todos los altavoces; abajo,
     **Elegir canción** y el volumen de ese móvil: **Bajar**, **Silenciar** (en ámbar mientras está silenciado; con otro
@@ -186,6 +199,9 @@ Consejo: reserva en el router una IP fija para cada móvil.
   (cristal esmerilado sobre luces de colores), **Casete** (etiqueta de cinta en papel crema, el único claro) y **Fósforo**
   (monitor verde de los de antes, con líneas de barrido). Cada navegador recuerda el suyo; con ?tema=neon en la
   dirección se abre con ese.
+- **En el móvil** (pantallas de hasta 640 px): las pestañas van abajo, como en una app, y las tablas (altavoces,
+  favoritas, limpiar, ajustes) pasan a tarjetas, con cada móvil como una etiqueta con su nombre, para que no se corte
+  nada. En el ordenador se ve igual que siempre.
 
 ## Ficheros
 
@@ -213,7 +229,9 @@ cerrado. Las versiones anteriores guardaban estos ficheros junto al proyecto; el
 
 El panel escucha en este PC. Con «Abrir el panel desde otros dispositivos de casa» (al final de Dispositivos) escucha
 también en las IP privadas del PC y se abre desde el móvil, la tablet u otro ordenador de la misma red, en la dirección
-que enseña (por ejemplo http://192.168.1.12:8765). Solo contesta a direcciones de casa (192.168.x.x, 10.x.x.x…), así
+que enseña (por ejemplo http://192.168.1.12:8765), o apuntando con la cámara del móvil al código QR que sale debajo, que
+abre directamente la música. Chrome avisa de que la conexión no es segura porque el panel no usa https: «Ir al sitio».
+Solo contesta a direcciones de casa (192.168.x.x, 10.x.x.x…), así
 que aunque alguien abriera el puerto en el router, a internet no le contesta; y por la red solo se entra con la IP o el
 nombre del PC, para que una web de fuera no pueda hacerse pasar por el panel. No pide contraseña: cualquiera conectado
 a tu red podría usarlo. «Ver pantalla» y «Mostrar todos» abren la pantalla de los móviles en este PC.

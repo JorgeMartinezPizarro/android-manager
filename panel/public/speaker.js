@@ -14,6 +14,13 @@
   const MAX_RATE = 0.005; // como mucho un 0,5 % más rápido o más lento: el tono no cambia de forma que se note
   const AHEAD = 45; // s antes de que acabe una canción en los que se descomprime la siguiente (ya descargada) para tenerla lista
   const SIMULATED = (Number(params.get('deriva')) || 0) / 1e6; // ?deriva=<ppm>: para probar, como si el audio se fuera desviando
+  // Modo ligero, para los Android 4 (el tablet: 835 MB de RAM y un procesador lento): la canción no se descomprime entera en
+  // memoria (unos 80 MB, y otro tanto mientras se convierte), que allí acababa con Chrome; la va leyendo un <audio> poco a
+  // poco. ?ligero lo fuerza y ?ligero=0 lo quita, para probar
+  const LIGHT = params.has('ligero') ? params.get('ligero') !== '0' : /Android [1-4]\./.test(navigator.userAgent);
+  const LIGHT_JUMP = 0.25; // s de desfase a partir de los que el modo ligero vuelve a arrancar donde toca; por debajo, sin saltos
+  const LIGHT_RATE = 0.01; // y para absorber uno pequeño, como mucho un 1 % más rápido o más lento (el <audio> mantiene el tono)
+  const SETTLE = 2000; // ms tras arrancar en los que su currentTime aún no dice por dónde suena de verdad
   const BORN = performance.now();
   const PAGE = Date.now(); // para el PC: si hay varias pestañas de altavoz en el móvil, cuenta la más nueva
   const clamp = (x, max) => Math.max(-max, Math.min(max, x));
@@ -95,9 +102,10 @@
     ahead = null;
     error = '';
     stopSound();
+    if (LIGHT) return stream(song, pre);
     if (pre && pre.ready) {
       loading = null;
-      track = { song, buffer: pre.ready };
+      track = { song, buffer: pre.ready, duration: pre.ready.duration };
       return;
     }
     loading = song;
@@ -111,7 +119,7 @@
         buffer = await audio().decodeAudioData(data);
       }
       if (loading !== song) return;
-      track = { song, buffer };
+      track = { song, buffer, duration: buffer.duration };
     } catch (e) {
       if (loading !== song) return;
       failed = song;
@@ -155,6 +163,7 @@
   // empieza justo donde para la vieja, sin hueco
   function schedule() {
     const target = state.startAt + state.delay;
+    if (LIGHT) return scheduleLight(target);
     const zero = ctxTime(target), now = ctx.currentTime; // zero: instante del audio en que debería haber empezado
     if (current && current.song === state.song) {
       if (current.target !== target) { current.target = target; current.errors = []; } // las medidas de antes ya no valen
@@ -171,7 +180,7 @@
       try { current.source.stop(when); } catch (e) {}
       current = null;
     }
-    if (pos >= track.buffer.duration) return;
+    if (pos >= track.duration) return;
     const source = ctx.createBufferSource();
     source.buffer = track.buffer;
     source.playbackRate.value = rate;
@@ -200,10 +209,147 @@
 
   function stopSound() {
     offBy = null;
+    clearTimeout(startTimer);
     if (!current) return;
-    try { current.source.stop(); } catch (e) {}
+    if (LIGHT) {
+      current.el.pause();
+      current.el.playbackRate = 1;
+    } else {
+      try { current.source.stop(); } catch (e) {}
+    }
     current = null;
   }
+
+  // ── Modo ligero: un <audio> para la que suena y otro para la siguiente, que se va descargando ──
+
+  const players = LIGHT ? [new Audio(), new Audio()] : [];
+  for (const p of players) {
+    p.preload = 'auto';
+    p.muted = SILENT;
+  }
+  let unlocked = false; // Chrome deja sonar los <audio>: tras un toque, o porque ya dejaba
+  let lag = 0.3; // s que tarda en sonar de verdad tras play(); se aprende de cada arranque
+  let startTimer = null;
+  const canPlay = () => (LIGHT ? unlocked : Boolean(ctx && ctx.state === 'running'));
+
+  // Para saber si Chrome ya deja sonar sin tocar: un WAV de una muestra de silencio
+  function silence() {
+    const v = new DataView(new ArrayBuffer(46));
+    const text = (at, s) => { for (let i = 0; i < s.length; i++) v.setUint8(at + i, s.charCodeAt(i)); };
+    text(0, 'RIFF'); v.setUint32(4, 38, true); text(8, 'WAVEfmt '); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 16000, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true); text(36, 'data'); v.setUint32(40, 2, true);
+    return URL.createObjectURL(new Blob([v], { type: 'audio/wav' }));
+  }
+
+  // Hay Chrome que pide el toque para cada <audio>: play() dentro del toque lo desbloquea y pause() lo deja como estaba
+  function unlock() {
+    unlocked = true;
+    for (const p of players) {
+      if (!p.paused) continue;
+      p.play().catch(() => {});
+      p.pause();
+    }
+    update();
+  }
+
+  // El Chrome de un móvil con poca memoria no descarga nada de un <audio> hasta que suena (no hace caso de preload): se le
+  // hace sonar en silencio hasta que arranca, y se para. El del tablet ni eso deja antes de que alguien toque la página
+  function warm(el) {
+    el.muted = true;
+    el.warming = el.play().then(() => el.pause(), e => {
+      if (e && e.name === 'NotSupportedError') throw new Error('el PC no la encuentra o no es un formato válido');
+      throw e;
+    }).finally(() => {
+      el.muted = SILENT;
+      el.warming = null;
+    });
+    return el.warming;
+  }
+
+  // La canción sin descomprimirla entera: en el <audio> que ya la tenía preparada o en otro; el que sobra se suelta
+  async function stream(song, pre) {
+    const el = pre ? pre.el : players.filter(p => p.song === song).concat(players)[0];
+    for (const p of players) {
+      if (p === el || !p.song) continue;
+      p.song = null;
+      p.removeAttribute('src');
+      p.load();
+    }
+    loading = song;
+    track = null;
+    try {
+      if (el.song !== song) {
+        el.song = song;
+        el.src = '/song/' + encodeURIComponent(song);
+      }
+      if (el.warming) await el.warming.catch(() => {}); // la siguiente, que aún se estaba preparando
+      if (el.readyState < 1) await warm(el);
+      if (loading !== song) return;
+      track = { song, el, duration: isFinite(el.duration) ? el.duration : (state && state.duration) || Infinity };
+    } catch (e) {
+      if (loading !== song) return;
+      if (e && e.name === 'NotAllowedError') unlocked = false; // hace falta un toque; luego se vuelve a intentar
+      else {
+        failed = song;
+        error = 'No he podido cargar la canción: ' + e.message;
+      }
+    }
+    loading = null;
+    update();
+  }
+
+  // Compara por dónde va el <audio> (currentTime, que ya cuenta lo que tarda en salir por el altavoz) con por dónde
+  // debería ir. Con poco desfase acelera o frena; con mucho, para y vuelve a arrancar donde toca, contando con lo que
+  // tarda en sonar (lag). Se llama cada medio segundo mientras suena
+  function scheduleLight(target) {
+    const el = track.el, t = performance.now();
+    const due = (performance.timeOrigin + t + offsetAt(t) - target) / 1000; // s de canción que deberían estar sonando
+    if (current && (current.song !== state.song || current.target !== target)) stopSound(); // otra canción o un salto
+    if (!current) current = { song: state.song, target, el, errors: [], calm: 0, learn: false, starting: false };
+    if (due >= track.duration || el.ended) return;
+    const c = current;
+    if (el.paused) {
+      if (c.starting) return;
+      // Si aún no le toca, espera; si ya debería sonar, arranca por donde irá cuando por fin suene
+      c.starting = true;
+      const from = Math.max(0, due + lag);
+      if (Math.abs(el.currentTime - from) > 0.05) el.currentTime = from;
+      startTimer = setTimeout(() => {
+        if (current !== c) return;
+        el.playbackRate = 1;
+        el.play().then(() => {
+          c.starting = false;
+          c.calm = performance.now() + SETTLE;
+          c.learn = true;
+          c.errors = [];
+        }, e => {
+          c.starting = false;
+          if (e && e.name === 'NotAllowedError') unlocked = false; // hace falta un toque
+          update();
+        });
+      }, Math.max(0, -due - lag) * 1000);
+      return;
+    }
+    if (el.seeking || t < c.calm) return;
+    c.errors.push({ t, e: el.currentTime - due });
+    c.errors = c.errors.filter(x => t - x.t < 10000);
+    if (c.errors.length < 4) return;
+    offBy = median(c.errors.map(x => x.e));
+    if (c.learn) {
+      c.learn = false;
+      lag = Math.max(0, Math.min(3, lag - offBy)); // lo que se desvió al arrancar
+    }
+    if (Math.abs(offBy) > LIGHT_JUMP) {
+      fixes++;
+      el.pause(); // y en la siguiente vuelta arranca donde toca
+      c.errors = [];
+      return;
+    }
+    const rate = Math.abs(offBy) < 0.015 ? 1 : 1 + clamp(-offBy / HORIZON, LIGHT_RATE);
+    if (Math.abs(rate - el.playbackRate) > 1e-4) el.playbackRate = rate;
+  }
+  if (LIGHT) setInterval(() => { if (current && state && track) schedule(); }, 500);
 
   // ── Lo que hay que hacer según lo que diga el PC; se llama con cada aviso y cada poco ──
 
@@ -214,14 +360,14 @@
       track = null;
       error = '';
       stopSound();
-    } else if (s.song !== failed && s.song !== loading && (!track || track.song !== s.song)) {
-      load(s.song);
+    } else if (s.song !== failed && s.song !== loading && (!track || track.song !== s.song) && (!LIGHT || unlocked)) {
+      load(s.song); // el modo ligero, tras el toque: sin él, Chrome no deja ni descargarla
     }
     const go = s && s.song && s.playing && s.on && s.startAt != null && track && track.song === s.song
-      && ctx && ctx.state === 'running' && clock.ok;
+      && canPlay() && clock.ok;
     if (go) schedule(); else stopSound();
     prepare(s);
-    phase = !ctx || ctx.state !== 'running' ? 'tap' : error ? 'error' : loading ? 'loading' : current ? 'playing' : track ? 'ready' : 'idle';
+    phase = !canPlay() ? 'tap' : error ? 'error' : loading ? 'loading' : current ? 'playing' : track ? 'ready' : 'idle';
     render();
     report();
   }
@@ -230,14 +376,25 @@
   function prepare(s) {
     const next = s && s.song && s.next !== s.song ? s.next : null;
     if (ahead && ahead.song !== next) ahead = null;
-    if (!next || loading || !track || track.song !== s.song || !ctx) return;
+    if (!next || loading || !track || track.song !== s.song || (!LIGHT && !ctx)) return;
+    if (LIGHT) {
+      // Sin descomprimirla: basta con que el otro <audio> la vaya descargando
+      if (!ahead) {
+        const el = players.find(p => p !== track.el);
+        el.song = next;
+        el.src = '/song/' + encodeURIComponent(next);
+        warm(el).catch(() => {});
+        ahead = { song: next, el };
+      }
+      return;
+    }
     if (!ahead) {
       ahead = { song: next, data: download(next), decoding: null, ready: null };
       ahead.data.catch(() => {});
     }
     const pcNow = performance.timeOrigin + performance.now() + offsetAt(performance.now());
     const pos = s.playing && s.startAt != null ? (pcNow - s.startAt) / 1000 : s.position || 0;
-    if (ahead.decoding || track.buffer.duration - pos > AHEAD) return;
+    if (ahead.decoding || track.duration - pos > AHEAD) return;
     const a = ahead;
     a.decoding = a.data.then(data => ctx.decodeAudioData(data));
     a.decoding.then(buffer => { a.ready = buffer; }, () => {});
@@ -248,10 +405,11 @@
   function report() {
     if (!linked) return;
     const body = {
-      id: ID, page: PAGE, phase, song: loading || (track && track.song) || null, duration: track ? track.buffer.duration : null,
+      id: ID, page: PAGE, phase, song: loading || (track && track.song) || null, duration: track && isFinite(track.duration) ? track.duration : null,
       error, rtt: clock.rtt, fixes, visible: !document.hidden, rest: resting,
-      off: offBy == null ? null : Math.round(offBy * 1e4) / 10, speed: current ? Math.round((current.rate - 1) * 1e5) / 1e3 : null,
+      off: offBy == null ? null : Math.round(offBy * 1e4) / 10, speed: current ? Math.round(((LIGHT ? current.el.playbackRate : current.rate) - 1) * 1e5) / 1e3 : null,
       jitter: audioFit ? Math.round(audioFit.rms * 1e4) / 10 : null,
+      light: LIGHT, // para calibrar: tarda más en cuadrar tras arrancar
     };
     const key = [phase, body.song, error, body.visible, resting].join('|');
     if (key === lastKey && Date.now() - lastSent < 10000) return;
@@ -390,7 +548,7 @@
   let shown = 0;
   function progress() {
     const s = state || {};
-    const dur = s.duration || (track && track.song === s.song ? track.buffer.duration : 0);
+    const dur = s.duration || (track && track.song === s.song && isFinite(track.duration) ? track.duration : 0);
     const pcNow = performance.timeOrigin + performance.now() + offsetAt(performance.now());
     const pos = Math.min(dur, s.playing && s.startAt != null ? Math.max(0, (pcNow - s.startAt) / 1000) : s.position || 0);
     const pct = s.song && dur ? pos / dur * 100 : 0;
@@ -498,6 +656,7 @@
   }, 5000);
 
   $('activate').onclick = () => {
+    if (LIGHT) return unlock();
     audio().resume().catch(() => {});
     // Un sonido vacío termina de desbloquear el audio en algunos móviles
     const src = ctx.createBufferSource();
@@ -527,7 +686,7 @@
   window.altavoz = () => ({
     phase, song: current && current.song, rtt: clock.rtt, offset: offsetAt(performance.now()), ppm: clock.fit && Math.round(clock.fit.slope * 1e6), offBy, drift, fixes,
     audio: audioFit && { ppm: Math.round(audioFit.slope * 1e9), jitter: Math.round(audioFit.rms * 1e4) / 10, points: audioPoints.length },
-    rate: current && current.rate, errors: current && current.errors.map(x => Math.round(x.e * 1e4) / 10),
+    light: LIGHT, lag, rate: current && (LIGHT ? current.el.playbackRate : current.rate), errors: current && current.errors.map(x => Math.round(x.e * 1e4) / 10),
   });
 
   // ── Arranque ──
@@ -554,7 +713,9 @@
   };
   events.onerror = () => { linked = false; render(); }; // EventSource vuelve a intentarlo solo
 
-  audio(); // sin un toque se queda en pausa; si Chrome ya deja sonar, no hace falta tocar
+  // Sin un toque se queda en pausa; si Chrome ya deja sonar, no hace falta tocar
+  if (LIGHT) new Audio(silence()).play().then(() => { unlocked = true; update(); }, () => {});
+  else audio();
   syncClock(8).then(update);
   setInterval(() => syncClock(2).then(update), 5000);
   setInterval(update, 2000);

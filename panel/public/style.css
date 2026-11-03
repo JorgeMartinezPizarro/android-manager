@@ -348,6 +348,10 @@ tr.dim .app-cell { opacity: .6; }
 .app-icon.letter { display: grid; place-items: center; font-weight: 700; font-size: 17px; color: #fff; background: hsl(var(--hue) 42% 46%); }
 .app-meta { display: flex; flex-wrap: wrap; align-items: center; row-gap: 2px; }
 .app-meta code { color: var(--muted); }
+/* Favoritas: nombre, paquete y origen en tres líneas; el paquete se parte por los puntos si no cabe */
+.app-pkg { display: block; color: var(--muted); }
+.app-src { margin-top: 3px; }
+.app-src .tag { margin-left: 0; }
 .tag.src-apk { background: rgb(124 92 255 / .13); color: #6246d6; }
 .tag.src-fdroid { background: rgb(26 115 232 / .12); color: #1b66c9; }
 .tag.src-play { background: var(--accent-weak); color: var(--accent-text); }
@@ -391,6 +395,10 @@ button.st:hover { transform: scale(1.1); box-shadow: inset 0 0 0 1.5px currentCo
 details.card { margin-top: 16px; }
 .lan { margin-top: 16px; }
 .lan p { margin: 8px 0 0; }
+/* El QR para abrir la música desde un móvil, con su explicación al lado */
+.lan-qr { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
+.lan-qr .qr-code { width: 132px; }
+.lan-qr p { margin: 0; max-width: 46ch; }
 .segmented { display: inline-flex; flex-wrap: wrap; gap: 2px; margin: 6px 0 14px; padding: 4px; border-radius: 999px; background: var(--chip);
   box-shadow: inset 0 0 0 1px var(--border); }
 .segmented button { padding: 6px 14px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: inherit; font-weight: 500; cursor: pointer; }
@@ -789,3 +797,65 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
 .swatch::before, .swatch::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; }
 .swatch::before { left: 6px; bottom: 6px; background: var(--s-a); box-shadow: 0 0 8px var(--s-a); }
 .swatch::after { right: 6px; top: 6px; background: var(--s-b); }
+
+/* Calibrar con el micrófono: cada altavoz y cómo va su medida */
+.cal { width: 100%; margin: 12px 0 4px; border-collapse: collapse; }
+.cal td { padding: 7px 10px; border-top: 1px solid var(--border); }
+.cal td:first-child { font-weight: 600; white-space: nowrap; }
+.cal-state.bad { color: var(--danger); }
+
+/* ── En el móvil ── Las pestañas van abajo, como en una app, y las tablas pasan a tarjetas: cada fila es una tarjeta y cada
+   columna de un móvil, una etiqueta con su nombre (data-label). Así no se corta nada ni hay que deslizar de lado */
+.nav-ico { display: none; }
+@media (max-width: 640px) {
+  /* Con el filtro de cristal, la barra fija de abajo se quedaría encerrada en la cabecera: aquí, el cristal sin desenfoque */
+  .top { backdrop-filter: none; background: linear-gradient(var(--glass), var(--glass)), var(--bg); }
+  .theme-menu { margin-left: auto; }
+  #theme-name { display: none; }
+  nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); overflow: visible;
+    background: linear-gradient(var(--glass), var(--glass)), var(--bg); border-top: 1px solid var(--border); }
+  nav a { flex-direction: column; justify-content: center; gap: 2px; padding: 6px 2px; border-radius: 14px; font-size: 11.5px; }
+  nav a.active::before { display: none; }
+  :root[data-theme="fosforo"] nav a { font-size: 10.5px; }
+  .nav-ico { display: block; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  main { padding: 20px 14px calc(96px + env(safe-area-inset-bottom)); }
+  #toasts { left: 12px; right: 12px; bottom: calc(80px + env(safe-area-inset-bottom)); max-width: none; }
+
+  /* Las tablas, en tarjetas */
+  .card.flush.scroll-x { overflow: hidden; }
+  .matrix, .matrix tbody { display: block; }
+  .matrix thead { display: none; }
+  .matrix tr { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .matrix tbody tr:last-child { border-bottom: 0; }
+  .matrix td { padding: 0; border: 0; }
+  .matrix .app-cell { flex: 1 1 60%; min-width: 0; }
+  .matrix .star-cell { flex: none; width: auto; }
+  .matrix tr.group { display: block; padding: 0; }
+  .matrix tr.group th { display: block; }
+  .matrix .row-actions { order: 1; flex: none; width: auto; } /* en el escritorio, width: 1% para que no ocupe */
+  /* Cada móvil: su estado y su nombre, dos por línea */
+  .matrix .cell { order: 2; display: flex; align-items: center; gap: 8px; flex: 0 0 calc(50% - 5px); width: auto; min-width: 0; text-align: left; }
+  .matrix .cell::after { content: attr(data-label); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--muted); }
+  .matrix .cell .st { flex: none; width: 26px; height: 26px; font-size: 13px; }
+  .matrix .cell .none { flex: none; width: 26px; text-align: center; }
+  /* Limpiar: sus botones, debajo y uno al lado de otro */
+  .cleanup .row-actions { order: 3; flex: 1 1 100%; }
+  .cleanup .row-actions .stack { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; }
+  /* Ajustes: el perfil común debajo del nombre, a todo lo ancho */
+  .settings .app-cell { flex-basis: 100%; }
+  .settings td.want { order: 1; flex: 1 1 100%; display: flex; align-items: center; gap: 10px; width: auto; }
+  .settings td.want::before { content: attr(data-label); flex: none; font-size: 13px; color: var(--muted); }
+  .settings select { flex: 1; width: auto; min-width: 0; }
+  /* Altavoces: nombre y estado arriba, el volumen a todo lo ancho y debajo el retraso y los botones */
+  .speakers .app-cell { flex-basis: 45%; }
+  .speakers .sp-state { flex: none; max-width: 55%; text-align: right; }
+  .speakers .sp-vol { order: 1; flex: 1 1 100%; display: flex; align-items: center; gap: 8px; }
+  .speakers .sp-vol .vol { flex: 1; width: auto; min-width: 0; }
+  .speakers .sp-vol .vol-val { min-width: 3em; margin: 0; text-align: right; }
+  .speakers .nowrap .btn + .btn { margin-left: 0; }
+  .speakers .sp-delay { order: 2; flex: 1 1 auto; display: flex; align-items: center; }
+  .speakers .delay-val { height: 32px; padding: 0 4px; }
+  .speakers .sp-delay::before { content: "Retraso"; margin-right: 8px; font-size: 13px; color: var(--muted); }
+  .speakers .row-actions { order: 3; }
+}

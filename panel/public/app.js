@@ -161,13 +161,17 @@ async function viewDevices(current) {
 }
 
 // El panel desde otro móvil, tablet u ordenador de la misma red; con las direcciones para abrirlo, si está encendido
-const lanHtml = ({ on, urls }) => `
+const lanHtml = ({ on, urls, qr }) => `
   <label class="switch"><input type="checkbox" data-act="lan" ${on ? 'checked' : ''}><span class="knob"></span>Abrir el panel desde otros dispositivos de casa</label>
   <p class="muted">${on && urls.length
     ? `Desde el móvil, la tablet u otro ordenador conectados a tu red, abre ${urls.map(u => `<a href="${esc(u)}">${esc(u)}</a>`).join(' o ')}.`
     : 'Para usarlo desde el móvil, la tablet u otro ordenador conectados a la misma red que este PC.'}
     Solo dentro de casa: desde internet no contesta. No pide contraseña, así que cualquiera conectado a tu red podría usarlo.
-    «Ver pantalla» abre la pantalla del móvil en este PC.</p>`;
+    «Ver pantalla» abre la pantalla del móvil en este PC.</p>
+  ${qr ? `<div class="lan-qr"><div class="qr-code">${qr}</div>
+    <p class="muted small">Desde un móvil, apúntale con la cámara: abre la música del panel. Chrome avisará de que la
+      conexión no es segura (el panel no usa https): pulsa «Ir al sitio». Luego, en ⋮, «Añadir a pantalla de inicio» lo
+      deja a mano.</p></div>` : ''}`;
 
 async function loadGrid(current = () => true) {
   const { devices, saved } = await api('/devices');
@@ -560,13 +564,16 @@ function catalogHtml({ apps, devices, auto, last }) {
   const rows = apps.map(a => `<tr data-pkg="${esc(a.pkg)}">
       <td class="app-cell"><div class="app-id">${appIcon(a)}<div>
         <div class="app-name">${esc(a.name)}</div>
-        <div class="app-meta"><code>${esc(a.pkg)}</code>${tag((a.url ? 'Enlace' : SOURCES[a.source]) + (a.versionName ? ` · ${a.versionName}` : ''), `src-${a.source}`)}</div>
+        <code class="app-pkg">${esc(a.pkg).replace(/\./g, '.<wbr>')}</code>
+        <div class="app-src">${tag((a.url ? 'Enlace' : SOURCES[a.source]) + (a.versionName ? ` · ${a.versionName}` : ''), `src-${a.source}`)}</div>
       </div></div></td>
       ${devices.map(d => statusCell(d, a)).join('')}
       <td class="row-actions">
-        <button class="btn small" data-act="sync-app" ${devices.some(d => pending(d, a)) ? '' : 'disabled'}>${a.source === 'play' ? 'Abrir en Play' : 'Instalar donde falte'}</button>
-        <button class="btn ghost icon small" data-act="rename-app" title="Cambiar el nombre">✎</button>
-        <button class="btn small ghost danger" data-act="remove-app" title="Dejar de tenerla como favorita y, si quieres, desinstalarla de todos">Quitar…</button>
+        ${!devices.some(d => pending(d, a)) ? '' : a.source === 'play'
+    ? iconBtn('sync-app', ICON.store, 'Abrir Google Play en los móviles donde falta, para pulsar «Instalar»', 'small')
+    : iconBtn('sync-app', ICON.download, 'Instalarla en los móviles donde falta o tiene versión nueva', 'small')}
+        ${iconBtn('rename-app', ICON.edit, 'Cambiar el nombre', 'small ghost')}
+        ${iconBtn('remove-app', ICON.trash, 'Quitarla de favoritas y, si quieres, desinstalarla de todos', 'small ghost danger')}
       </td>
     </tr>`).join('');
   return `${bar}
@@ -584,7 +591,7 @@ function catalogHtml({ apps, devices, auto, last }) {
 
 function statusCell(d, a) {
   const s = d.status?.[a.pkg];
-  if (!s) return `<td class="cell"><span class="none" title="${esc(d.status?.error || 'No se pudo leer el móvil')}">?</span></td>`;
+  if (!s) return `<td class="cell" data-label="${esc(title(d))}"><span class="none" title="${esc(d.status?.error || 'No se pudo leer el móvil')}">?</span></td>`;
   const where = title(d);
   const [label, kind, tip] = s.state === 'skip' ? (s.have != null
     ? ['✓', 'skip', `Instalada en ${where}, aunque has dicho que no la necesita`] : ['–', 'skip', `${where} no la necesita: ni se instala ni se actualiza`])
@@ -593,7 +600,7 @@ function statusCell(d, a) {
     : s.state === 'update' ? ['↑', 'update', `Hay versión nueva para ${where} (tiene la ${s.have})`]
     : a.source === 'play' ? ['▶', 'missing', `Falta en ${where}; se instala desde Google Play`]
     : ['+', 'missing', `Falta en ${where}`];
-  return `<td class="cell" data-serial="${esc(d.serial)}"><button class="st ${kind}" data-act="app-cell"
+  return `<td class="cell" data-serial="${esc(d.serial)}" data-label="${esc(where)}"><button class="st ${kind}" data-act="app-cell"
     title="${esc(tip)}. Pulsa para elegir qué hacer" aria-label="${esc(tip)}">${label}</button></td>`;
 }
 
@@ -709,11 +716,11 @@ function cleanRow(r) {
     ? `<span class="why">${esc(suggested[r.pkg])}</span>` : '';
   const cells = devices.map(d => {
     const v = r.cells.get(d.serial), where = title(d);
-    if (!v) return `<td class="cell"><span class="none" title="${esc(where)} no la tiene">·</span></td>`;
+    if (!v) return `<td class="cell" data-label="${esc(where)}"><span class="none" title="${esc(where)} no la tiene">·</span></td>`;
     const [label, kind, tip] = v === 'on'
       ? ['●', r.kind === 'removed' ? 'missing' : 'update', `En ${where}. Pulsa para quitarla de ese móvil`]
       : ['○', 'skip', `Quitada de ${where}. Pulsa para recuperarla`];
-    return `<td class="cell" data-serial="${esc(d.serial)}"><button class="st ${kind}" data-act="clean-cell"
+    return `<td class="cell" data-serial="${esc(d.serial)}" data-label="${esc(where)}"><button class="st ${kind}" data-act="clean-cell"
       title="${esc(tip)}" aria-label="${esc(tip)}">${label}</button></td>`;
   }).join('');
   const has = v => [...r.cells.values()].includes(v);
@@ -986,6 +993,11 @@ const ICON = {
   control: icon('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>', 18),
   wifi: icon('<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/>', 18),
   unplug: icon('<path d="m19 5 3-3M2 22l3-3M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4zM7.5 13.5 10 11M10.5 16.5 13 14M12 6l6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0z"/>', 18),
+  download: icon('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>'),
+  store: icon('<path d="M7 4.5v15l12-7.5z"/>'),
+  edit: icon('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>'),
+  trash: icon('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>'),
+  mic: icon('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
   disk: icon('<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>', 13),
 };
 // 4555700000 → «4,6 GB»; por encima de 10, sin decimales
@@ -1063,6 +1075,7 @@ function renderMusic() {
     <div class="section-head"><h2>Altavoces</h2>
       <div class="actions">
         <button class="btn" id="all-btn" data-act="music" data-action="none"></button>
+        <button class="btn" data-act="calibrate" title="Mide con el micrófono de este PC cuándo se oye cada altavoz encendido y les pone el retraso que los cuadra">${ICON.mic}Calibrar</button>
         <button class="btn" data-act="speaker-all" title="Abre la página de altavoz en todos los móviles conectados">Abrir en todos</button>
         <button class="btn" data-act="screen-all" title="Abre en este PC la pantalla de cada móvil, para verlas y manejarlas a la vez">Mostrar todos</button>
       </div></div>
@@ -1101,10 +1114,10 @@ function speakerRow(d) {
   return `<tr data-serial="${esc(d.serial)}" data-id="${esc(d.serialno)}">
     <td class="app-cell"><div class="app-name">${esc(title(d))}</div>${d.name ? `<div class="muted small">${esc(model(d))}</div>` : ''}</td>
     <td class="sp-state"></td>
-    <td class="nowrap"><button class="btn small icon mute" data-act="mute"></button><input type="range" class="vol" min="0" max="100" step="1"
+    <td class="nowrap sp-vol"><button class="btn small icon mute" data-act="mute"></button><input type="range" class="vol" min="0" max="100" step="1"
       disabled aria-label="Volumen de la música en ${esc(title(d))}"><span class="vol-val small">…</span><button class="btn small"
       data-act="music" data-action="solo" title="Que suene solo en este móvil; los demás se quedan en silencio">Solo</button></td>
-    <td class="nowrap"><button class="btn small icon" data-act="delay" data-step="-1" title="${esc(tip)}" aria-label="1 ms menos de retraso">−</button><input
+    <td class="nowrap sp-delay"><button class="btn small icon" data-act="delay" data-step="-1" title="${esc(tip)}" aria-label="1 ms menos de retraso">−</button><input
       type="number" class="delay-val" min="-1000" max="1000" step="1" title="${esc(tip)}. Puedes escribirlo, de −1000 a 1000"
       aria-label="Retraso de ${esc(title(d))} en milisegundos"><button class="btn small icon" data-act="delay"
       data-step="1" title="${esc(tip)}" aria-label="1 ms más de retraso">+</button></td>
@@ -1152,8 +1165,9 @@ function updateMusic() {
       + `Lo corrige solo, sin saltos: ahora va un ${num(room.speed || 0)} % más ${room.speed < 0 ? 'despacio' : 'deprisa'}. ${margin}. `
       + `Recolocado de golpe ${room.fixes} ${room.fixes === 1 ? 'vez' : 'veces'}`
       + (room.jitter != null ? `. Lo que baila la lectura de su audio: ±${num(room.jitter)} ms` : '');
+    const off = Math.round(room?.off ?? 0);
     const clock = room?.linked && room.phase === 'playing' && drift
-      ? `<span class="muted small sp-clock" title="${esc(drift)}">desfase ${Math.round(Math.abs(room.off))} ms</span>` : '';
+      ? `<span class="muted small sp-clock" title="${esc(drift)}">${off < 0 ? '−' : '+'}${Math.abs(off)} ms</span>` : '';
     tr.querySelector('.sp-state').innerHTML = `<span class="val ${kind}" title="${esc([tip, room?.linked && margin].filter(Boolean).join('. '))}">${esc(text)}</span>${clock}`
       + (room?.lan ? `<span class="tag" title="Su Android es viejo: llega al PC por la wifi y Chrome no le deja mantener la pantalla encendida. Enchufado, con «Pantalla encendida mientras carga» (Ajustes), no se apaga. Déjalo enchufado">wifi</span>` : '')
       + (room?.screen === false ? '<span class="tag" title="Solo altavoz: suena con la pantalla apagada">sin pantalla</span>' : '')
@@ -1215,6 +1229,249 @@ function updateMusic() {
 async function refreshMusic() {
   state.music = await api('/music');
   if ($('#music .now')) updateMusic();
+}
+
+// ── Calibrar con el micrófono ──
+// Cada altavoz se cuadra con el reloj del PC, pero cada móvil tarda distinto en sacar el sonido por su altavoz, y eso solo
+// se sabe oyéndolo. El panel hace sonar uno a uno los que están encendidos, con un barrido cada segundo (CHIRP, el mismo de
+// music.js), lo graba con el micrófono de este PC y busca cuándo llega cada barrido. Lo que tarde el micrófono es igual
+// para todos y se anula: queda cuánto antes o después se oye cada uno, desde donde esté el micrófono
+
+const CAL = '*calibrar';
+const CHIRP = { from: 1000, to: 4000, length: 0.04 };
+const pcNow = () => performance.timeOrigin + performance.now();
+const pause = ms => new Promise(r => setTimeout(r, ms));
+const middle = list => { const s = [...list].sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+function chirpTemplate(rate) {
+  const out = new Float32Array(Math.round(CHIRP.length * rate));
+  for (let i = 0; i < out.length; i++) {
+    const d = i / rate;
+    out[i] = Math.sin(2 * Math.PI * (CHIRP.from * d + (CHIRP.to - CHIRP.from) * d * d / (2 * CHIRP.length))) * Math.sin(Math.PI * d / CHIRP.length) ** 2;
+  }
+  return out;
+}
+
+// El barrido en rec entre los índices from y to. Se toma el primer punto de la correlación que llega a la mitad del máximo
+// (un eco puede oírse más fuerte que el sonido directo, pero llega después); quality, cuánto destaca sobre el ruido
+function findChirp(rec, tpl, from, to) {
+  from = Math.max(0, Math.round(from));
+  to = Math.min(rec.length - tpl.length, Math.round(to));
+  if (to - from < tpl.length) return null;
+  const corr = new Float32Array(to - from);
+  let peak = 0, at = 0, energy = 0;
+  for (let k = from; k < to; k++) {
+    let sum = 0;
+    for (let j = 0; j < tpl.length; j++) sum += rec[k + j] * tpl[j];
+    const v = Math.abs(sum);
+    corr[k - from] = v;
+    energy += v * v;
+    if (v > peak) { peak = v; at = k - from; }
+  }
+  let first = at;
+  for (let k = at; k >= Math.max(0, at - (tpl.length >> 1)); k--) if (corr[k] >= peak / 2) first = k;
+  return { index: from + first, quality: peak / Math.sqrt(energy / corr.length) };
+}
+
+// Graba el micrófono sin que el navegador lo toque (ni quitar eco ni ruido ni subir el volumen) en rec.data. rec.diff
+// pasa del reloj del audio al del PC (ms), con lo que dice getOutputTimestamp cada 200 ms
+async function startMic() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+  });
+  const ac = new AudioContext();
+  const code = `registerProcessor('grabar', class extends AudioWorkletProcessor {
+    constructor() { super(); this.buf = new Float32Array(4096); this.n = 0; this.start = 0; }
+    process(inputs) {
+      const ch = inputs[0][0];
+      if (!ch) return true;
+      if (!this.n) this.start = currentFrame;
+      this.buf.set(ch, this.n);
+      this.n += ch.length;
+      if (this.n + ch.length > this.buf.length) {
+        this.port.postMessage({ frame: this.start, data: this.buf.slice(0, this.n) });
+        this.n = 0;
+      }
+      return true;
+    }
+  });`;
+  await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+  const node = new AudioWorkletNode(ac, 'grabar'), mute = ac.createGain();
+  mute.gain.value = 0; // con salida, para que Chrome lo haga funcionar; en silencio
+  ac.createMediaStreamSource(stream).connect(node).connect(mute).connect(ac.destination);
+  const rec = { rate: ac.sampleRate, data: new Float32Array(ac.sampleRate * 300), first: null, length: 0, clock: [] };
+  node.port.onmessage = ({ data: { frame, data } }) => {
+    if (rec.first === null) rec.first = frame;
+    const at = frame - rec.first;
+    if (at + data.length <= rec.data.length) rec.data.set(data, at);
+    rec.length = Math.max(rec.length, at + data.length);
+  };
+  const tick = setInterval(() => {
+    const ts = ac.getOutputTimestamp();
+    if (ts.performanceTime) rec.clock = rec.clock.slice(-50).concat(performance.timeOrigin + ts.performanceTime - ts.contextTime * 1000);
+  }, 200);
+  rec.diff = () => middle(rec.clock);
+  rec.stop = () => {
+    clearInterval(tick);
+    for (const t of stream.getTracks()) t.stop();
+    ac.close();
+  };
+  if (ac.state !== 'running') await ac.resume();
+  for (let i = 0; i < 40 && (rec.first === null || !rec.clock.length); i++) await pause(100);
+  if (rec.first === null) {
+    rec.stop();
+    throw new Error('El micrófono no manda sonido: mira que esté conectado y elegido en el navegador');
+  }
+  return rec;
+}
+
+// El panel pone a sonar la calibración desde el principio (con ese altavoz solo) y devuelve la hora del PC a la que empieza
+async function restartCal(previous) {
+  await post('/music/seek', { position: 0 });
+  for (let i = 0; i < 60; i++) {
+    const { now } = await api('/music');
+    if (now.song === CAL && now.startAt && now.startAt !== previous) return now.startAt;
+    await pause(300);
+  }
+  throw new Error('La calibración no ha empezado a sonar');
+}
+
+// Mide un altavoz: cada barrido, cuánto después de su hora llega (ms); cuando cuatro seguidos coinciden (±3 ms) da la
+// mediana. El modo ligero (Android 4) tarda más en cuadrarse tras arrancar, así que se le espera más
+async function measureRoom(rec, tpl, { startAt, delay, light }, cancelled, progress) {
+  const limit = pcNow() + (light ? 45000 : 15000);
+  const toIndex = ms => (ms - rec.diff()) * rec.rate / 1000 - rec.first;
+  let s = Math.max(1, Math.ceil((pcNow() + 1500 - startAt - delay) / 1000)); // el anterior ya callado y este sonando
+  let last = null;
+  const found = [];
+  while (pcNow() < limit && !cancelled()) {
+    const center = startAt + delay + s * 1000 + (last ?? 0), span = last == null ? 500 : 80;
+    if (rec.length < toIndex(center + span) + tpl.length + rec.rate * 0.1) { await pause(150); continue; }
+    const hit = findChirp(rec.data, tpl, toIndex(center - span), toIndex(center + span));
+    s++;
+    if (!hit || hit.quality < 8) {
+      last = null; // no se oyó: el siguiente se busca en todo el segundo
+      found.push(null);
+      progress(found);
+      continue;
+    }
+    last = (hit.index + rec.first) * 1000 / rec.rate + rec.diff() - (startAt + delay + (s - 1) * 1000);
+    found.push({ err: last, quality: hit.quality });
+    progress(found);
+    const four = found.slice(-4);
+    if (four.length === 4 && four.every(Boolean) && Math.max(...four.map(f => f.err)) - Math.min(...four.map(f => f.err)) <= 6) {
+      return { err: middle(four.map(f => f.err)), quality: middle(four.map(f => f.quality)) };
+    }
+    await pause(50);
+  }
+  return null;
+}
+
+// Los que se calibran: abiertos, sonando y encendidos (los silenciados se dejan como están)
+async function calibrate() {
+  await refreshMusic();
+  const { rooms } = state.music;
+  const list = state.devices.filter(d => rooms[d.serialno]?.on && rooms[d.serialno].linked
+    && !['tap', 'error'].includes(rooms[d.serialno].phase));
+  if (list.length < 2) return toast('Para cuadrarlos hacen falta al menos dos altavoces abiertos y sin silenciar', 'error');
+  const dlg = $('#dialog');
+  dlg.className = 'wide';
+  dlg.innerHTML = `<form method="dialog">
+      <h2>Calibrar con el micrófono</h2>
+      <div class="dlg-body">
+        <p>Pon el micrófono de este PC donde escuchas la música. Sonarán unos barridos cortos, cada altavoz por su cuenta
+          (unos 10 s cada uno; el tablet, algo más), y el panel medirá cuándo llega cada uno. Luego vuelve la canción.</p>
+        <table class="cal"><tbody>${list.map(d => `<tr data-id="${esc(d.serialno)}"><td>${esc(title(d))}</td>
+          <td class="cal-state muted">En espera</td></tr>`).join('')}</tbody></table>
+        <p class="muted small" id="cal-note">Los silenciados no se miden. El navegador pedirá permiso para usar el micrófono.</p>
+      </div>
+      <menu><button class="btn" value="close" id="cal-close">Cancelar</button><button class="btn primary" type="button" id="cal-go">Empezar</button></menu>
+    </form>`;
+  dlg.showModal();
+  let cancelled = false;
+  dlg.addEventListener('close', () => { cancelled = true; }, { once: true });
+  const row = d => dlg.querySelector(`tr[data-id="${CSS.escape(d.serialno)}"] .cal-state`);
+  $('#cal-go').onclick = () => runCalibration(list, row, () => cancelled).catch(e => {
+    $('#cal-go').disabled = false;
+    $('#cal-note').textContent = e.name === 'NotAllowedError' ? 'Sin permiso para el micrófono: dalo en el candado de la barra de direcciones' : e.message;
+  });
+}
+
+async function runCalibration(list, row, cancelled) {
+  const go = $('#cal-go');
+  go.disabled = true;
+  $('#cal-note').textContent = 'Abriendo el micrófono…';
+  const rec = await startMic();
+  const tpl = chirpTemplate(rec.rate);
+  const before = state.music, results = [];
+  try {
+    $('#cal-note').textContent = 'Preparando la calibración en los altavoces…';
+    await post('/music/solo', { id: list[0].serialno });
+    await post('/music/play', { song: CAL });
+    let startAt = null;
+    for (const d of list) {
+      if (cancelled()) break;
+      const room = state.music.rooms[d.serialno];
+      row(d).textContent = 'Arrancando…';
+      await post('/music/solo', { id: d.serialno });
+      startAt = await restartCal(startAt);
+      $('#cal-note').textContent = `Escuchando ${title(d)}…`;
+      const r = await measureRoom(rec, tpl, { startAt, delay: room.delay || 0, light: room.light }, cancelled, found => {
+        const ok = found.filter(Boolean);
+        row(d).textContent = ok.length ? `Oído ${ok.length} ${ok.length === 1 ? 'vez' : 'veces'}: ${ms(ok[ok.length - 1].err)}`
+          : `Escuchando… (sin oírlo ${found.length} ${found.length === 1 ? 'vez' : 'veces'})`;
+      });
+      results.push({ d, delay: room.delay || 0, ...r });
+      row(d).textContent = r ? `Medido` : 'No se oye bien: acércalo al micrófono o súbele el volumen';
+      row(d).className = `cal-state ${r ? '' : 'bad'}`;
+    }
+  } finally {
+    rec.stop();
+    await restoreMusic(before).catch(e => toast(e.message, 'error'));
+  }
+  if (cancelled()) return;
+  showCalibration(results.filter(r => r.err != null), list, row);
+}
+
+const ms = v => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Math.round(v))} ms`;
+
+// Como estaba: los encendidos y silenciados, y la canción por donde iba (o parada, si no había)
+async function restoreMusic(before) {
+  for (const [id, room] of Object.entries(before.rooms)) await post('/music/room', { id, on: room.on });
+  const { song, playing, position } = before.now;
+  if (!song || song === CAL) await post('/music/stop');
+  else {
+    await post('/music/play', { song });
+    if (!playing) await post('/music/toggle');
+    if (position > 1) await post('/music/seek', { position });
+  }
+  await refreshMusic();
+}
+
+// Lo que se oye de cada uno respecto a la mediana, y el retraso que lo cuadra: el que se oye tarde se adelanta y al revés
+function showCalibration(results, list, row) {
+  if (results.length < 2) {
+    $('#cal-note').textContent = 'No se han podido medir al menos dos: no se cambia nada.';
+    return;
+  }
+  const target = middle(results.map(r => r.delay + r.err));
+  for (const r of results) {
+    r.late = r.delay + r.err - target;
+    r.next = Math.max(-1000, Math.min(1000, Math.round(target - r.err)));
+    row(r.d).innerHTML = `Se oye ${Math.abs(r.late) < 2 ? 'a la par' : `${ms(r.late)} ${r.late > 0 ? '(tarde)' : '(pronto)'}`}`
+      + ` · retraso ${r.delay} → <strong>${r.next}</strong> ms`;
+  }
+  $('#cal-note').textContent = 'Medido desde el micrófono. «Aplicar» pone esos retrasos; la prueba de sincronía sirve para comprobarlo de oído.';
+  const go = $('#cal-go');
+  go.textContent = 'Aplicar';
+  go.disabled = false;
+  $('#cal-close').textContent = 'Cerrar';
+  go.onclick = () => busy(go, async () => {
+    for (const r of results) await post('/music/room', { id: r.d.serialno, delay: r.next });
+    $('#dialog').close();
+    toast('Retrasos puestos');
+    await refreshMusic();
+  });
 }
 
 // El volumen de cada móvil (lo que diga el propio móvil, también si lo cambian con sus botones)
@@ -1384,7 +1641,7 @@ function renderSettings() {
   const rows = settings.map(s => `<tr data-key="${esc(s.key)}">
       <td class="app-cell"><div class="app-name">${esc(s.name)}${s.android ? tag(`Android ${s.android} o superior`) : ''}</div>
         ${s.hint ? `<div class="muted small">${esc(s.hint)}</div>` : ''}</td>
-      <td class="want"><select class="want" aria-label="${esc(s.name)} en el perfil común">
+      <td class="want" data-label="Perfil común"><select class="want" aria-label="${esc(s.name)} en el perfil común">
         <option value="">No tocar</option>
         ${s.options.map(([v, text]) => `<option value="${esc(v)}" ${profile[s.key] === v ? 'selected' : ''}>${esc(text)}</option>`).join('')}
       </select></td>
@@ -1413,13 +1670,13 @@ function renderSettings() {
 const optionText = (s, v) => s.options.find(([o]) => o === v)?.[1] ?? v;
 
 function settingCell(d, s) {
-  if (!d.settings) return `<td class="cell"><span class="none" title="${esc(d.error || 'No se pudo leer')}">?</span></td>`;
+  if (!d.settings) return `<td class="cell" data-label="${esc(title(d))}"><span class="none" title="${esc(d.error || 'No se pudo leer')}">?</span></td>`;
   const v = d.settings[s.key];
-  if (v.na) return `<td class="cell"><span class="none" title="${esc(`${title(d)}: ${v.na}`)}">—</span></td>`;
+  if (v.na) return `<td class="cell" data-label="${esc(title(d))}"><span class="none" title="${esc(`${title(d)}: ${v.na}`)}">—</span></td>`;
   const st = settingState(d, s), now = v.text ?? '?', mine = own(d, s), want = wantFor(d, s);
   const tip = [`${title(d)}: ${now}`, st === 'diff' && `tiene que estar en ${optionText(s, want)}`,
     mine !== undefined && (mine === '' ? 'en este móvil no se toca' : 'propio de este móvil'), 'Pulsa para elegir'].filter(Boolean).join('. ');
-  return `<td class="cell" data-serial="${esc(d.serial)}"><button class="val ${st} ${mine !== undefined ? 'own' : ''}" data-act="setting-cell"
+  return `<td class="cell" data-serial="${esc(d.serial)}" data-label="${esc(title(d))}"><button class="val ${st} ${mine !== undefined ? 'own' : ''}" data-act="setting-cell"
     title="${esc(tip)}" aria-label="${esc(tip)}">${esc(now)}</button></td>`;
 }
 
@@ -1528,6 +1785,7 @@ const actions = {
     if (ok) toast(`Abriendo en el PC la pantalla de ${ok === 1 ? title(results.find(r => r.ok).d) : `${ok} móviles`}`);
     for (const r of results.filter(x => !x.ok)) toast(`${title(r.d)}: ${r.message}`, 'error');
   }),
+  calibrate: btn => busy(btn, calibrate),
   'music-folder': btn => busy(btn, () => post('/music/folder')),
   songs: openSongs,
   'songs-close': () => $('#songs-dlg').close(),

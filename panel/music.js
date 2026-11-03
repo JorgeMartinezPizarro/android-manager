@@ -25,6 +25,8 @@ const TYPES = {
   '.wav': 'audio/wav', '.flac': 'audio/flac',
 };
 const TEST = '*prueba'; // la prueba de sincronía; «*» no puede estar en un nombre de archivo de Windows
+const CAL = '*calibrar'; // la que suena mientras el panel calibra los altavoces con el micrófono; no sale en la lista
+const isTest = id => id === TEST || id === CAL;
 const LEAD = 800; // ms entre que el PC fija la hora de empezar y que empieza: lo que tarda el aviso en llegar a todos
 const WAIT = 15000; // lo que se espera, como mucho, a que todos los altavoces hayan cargado la canción
 
@@ -46,7 +48,7 @@ function songs() {
 // El nombre sin lo que añade la descarga de YouTube: el código del vídeo ([p4QqMKe3rwY]), la extensión del vídeo original y
 // coletillas como «(Official Music Video)» o «[4K]». Lo que distingue versiones, como «(Live 1977)», se queda
 const JUNK = /\s*[([](?:\s*(?:official|oficial|music|lyrics?|video|audio|hd|hq|4k|upgrade|vinyl|visualizer|animated|high|quality|remastered|with)\b)+\s*[)\]]/gi;
-const nameOf = id => (id === TEST ? 'Prueba de sincronía (pitidos)' : id.replace(/\.[^./]+$/, '').replace(/\s*\[[\w-]{11}\]$/, '')
+const nameOf = id => (id === TEST ? 'Prueba de sincronía (pitidos)' : id === CAL ? 'Calibrando con el micrófono' : id.replace(/\.[^./]+$/, '').replace(/\s*\[[\w-]{11}\]$/, '')
   .replace(/\.(avi|mp4|mkv|webm|flv)$/i, '').replace(JUNK, '').trim().replace(/\//g, ' · '));
 
 // WAV mono de 16 bits con la onda que dé sample(t), entre -1 y 1
@@ -75,7 +77,14 @@ const beeps = (seconds = 40) => wav(seconds, t => {
   if (s < 1 || d > 0.05) return 0;
   return Math.sin(2 * Math.PI * (s % 4 === 1 ? 1760 : 880) * t) * Math.min(1, d / 0.003, (0.05 - d) / 0.003) * 0.6;
 });
-let testWav = null;
+// Para calibrar con el micrófono: cada segundo, un barrido corto de 1 a 4 kHz. Al revés que un pitido, su eco no se parece
+// a él mismo un poco antes o después, así que el panel encuentra en la grabación cuándo llegó con menos de 1 ms de error.
+// public/app.js tiene la misma forma (CHIRP), para buscarlo
+const CHIRP = { from: 1000, to: 4000, length: 0.04 };
+const chirp = d => (d < 0 || d > CHIRP.length ? 0
+  : Math.sin(2 * Math.PI * (CHIRP.from * d + (CHIRP.to - CHIRP.from) * d * d / (2 * CHIRP.length))) * Math.sin(Math.PI * d / CHIRP.length) ** 2);
+const sweeps = (seconds = 150) => wav(seconds, t => (t < 1 ? 0 : chirp(t - Math.floor(t)) * 0.8));
+let testWav = null, calWav = null;
 
 // ── Habitaciones y altavoces ──
 
@@ -164,7 +173,7 @@ function scheduleEnd() {
   const d = durations.get(st.song);
   if (!st.playing || st.startAt == null || !d) return;
   endTimer = setTimeout(() => {
-    try { st.song === TEST ? stop() : skip(1); } catch { stop(); }
+    try { isTest(st.song) ? stop() : skip(1); } catch { stop(); }
   }, Math.max(0, st.startAt + d * 1000 - now()) + 300);
 }
 
@@ -176,7 +185,7 @@ function warning() {
 
 function play(song) {
   const list = songs();
-  if (song !== TEST && !list.some(s => s.id === song)) throw new Error('Esa canción ya no está en la carpeta de música');
+  if (!isTest(song) && !list.some(s => s.id === song)) throw new Error('Esa canción ya no está en la carpeta de música');
   Object.assign(st, { song, playing: true, position: 0, next: upcoming(song, list) });
   startWhenReady();
 }
@@ -184,7 +193,7 @@ function play(song) {
 // La que sigue a esa: en orden, la de después (tras la última, la primera); en aleatorio, cualquier otra, y si ya había
 // una elegida (y cargada en los altavoces) se mantiene. La prueba de sincronía no sigue con nada
 function upcoming(song, list = songs()) {
-  if (song === TEST || !list.length) return null;
+  if (isTest(song) || !list.length) return null;
   if (prefs.shuffle) {
     if (st.next && st.next !== song && list.some(s => s.id === st.next)) return st.next;
     const others = list.filter(s => s.id !== song);
@@ -338,7 +347,9 @@ async function open(serial, id, again = false) {
       ({ base, ip: lan } = await viaWifi(serial));
     }
     // t: una dirección distinta cada vez, para que Chrome la cargue de nuevo y no se limite a enseñar la pestaña
-    await adb.openSpeaker(serial, `${base}/?id=${encodeURIComponent(id)}${SILENT ? '&silencio' : ''}&t=${Date.now()}`);
+    const t = Date.now();
+    await adb.openSpeaker(serial, `${base}/?id=${encodeURIComponent(id)}${SILENT ? '&silencio' : ''}&t=${t}`);
+    adb.closeOldSpeakerTabs(serial, { port: PORT, id, t }).catch(() => {}); // sin esperar: tarda lo que tarde Chrome en abrirla
   } catch (e) {
     Object.assign(sp, { openedAt: 0, tapUntil: 0 });
     throw e;
@@ -407,7 +418,7 @@ function report(id, s) {
     phase: String(s.phase || ''), song, error: String(s.error || '').slice(0, 200),
     rtt: Number.isFinite(s.rtt) ? s.rtt : null, fixes: Number(s.fixes) || 0,
     off: Number.isFinite(s.off) ? s.off : null, speed: Number.isFinite(s.speed) ? s.speed : null,
-    jitter: Number.isFinite(s.jitter) ? s.jitter : null,
+    jitter: Number.isFinite(s.jitter) ? s.jitter : null, light: s.light === true,
   };
   if (song && s.duration > 0) durations.set(song, Number(s.duration));
   // Pide un toque: recién abierta por el panel, o recargada tras haber sonado. Solo si está delante (si no, el toque
@@ -515,7 +526,7 @@ function status() {
     songs: [{ id: TEST, name: nameOf(TEST), test: true }, ...songs()].map(s => ({ ...s, duration: durations.get(s.id) || null })),
     now: {
       song: st.song, name: st.song && nameOf(st.song), playing: st.playing, waiting: st.playing && st.startAt == null,
-      position: position(), duration: durations.get(st.song) || null, stopAt: st.stopAt, shuffle: prefs.shuffle,
+      position: position(), duration: durations.get(st.song) || null, stopAt: st.stopAt, shuffle: prefs.shuffle, startAt: st.startAt,
       next: st.next && nameOf(st.next),
     },
     rooms: Object.fromEntries(Object.entries(rooms).map(([id, room]) => {
@@ -573,15 +584,35 @@ async function readJson(req) {
   return body && typeof body === 'object' ? body : {};
 }
 
-function sendSong(res, id) {
-  if (id === TEST) return reply(res, 200, 'audio/wav', testWav ||= beeps());
+// Por trozos (Range) si se piden: el modo ligero de los altavoces la escucha con un <audio>, que para empezar por la mitad
+// pide el trozo que le hace falta en vez de descargarla desde el principio. send(start, end) manda esos bytes
+function sendRange(req, res, type, size, send) {
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  const partial = Boolean(range && (range[1] || range[2]));
+  const start = !partial ? 0 : range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+  const end = partial && range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+  if (start > end) {
+    res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+    return res.end();
+  }
+  res.writeHead(partial ? 206 : 200, {
+    'Content-Type': type, 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache',
+    ...(partial && { 'Content-Range': `bytes ${start}-${end}/${size}` }),
+  });
+  send(start, end);
+}
+
+function sendSong(req, res, id) {
+  if (isTest(id)) {
+    const data = id === TEST ? (testWav ||= beeps()) : (calWav ||= sweeps());
+    return sendRange(req, res, 'audio/wav', data.length, (start, end) => res.end(data.subarray(start, end + 1)));
+  }
   const file = path.resolve(DIR, ...id.split('/'));
   const type = TYPES[path.extname(file).toLowerCase()];
   if (!type || !file.startsWith(DIR + path.sep)) return reply(res, 404, 'text/plain', 'No existe');
   fs.stat(file, (err, s) => {
     if (err || !s.isFile()) return reply(res, 404, 'text/plain', 'No existe');
-    res.writeHead(200, { 'Content-Type': type, 'Content-Length': s.size, 'Cache-Control': 'no-cache' });
-    fs.createReadStream(file).pipe(res);
+    sendRange(req, res, type, s.size, (start, end) => fs.createReadStream(file, { start, end }).pipe(res));
   });
 }
 
@@ -635,7 +666,7 @@ async function handle(req, res) {
       }
       if (url.pathname === '/clock') return json(res, { t: now() });
       if (url.pathname === '/events') return events(req, res, url.searchParams.get('id'));
-      if (url.pathname.startsWith('/song/')) return sendSong(res, decodeURIComponent(url.pathname.slice(6)));
+      if (url.pathname.startsWith('/song/')) return sendSong(req, res, decodeURIComponent(url.pathname.slice(6)));
     }
     if (req.method === 'POST' && req.headers['x-altavoz'] === '1') {
       const body = await readJson(req);

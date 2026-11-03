@@ -466,6 +466,35 @@ async function openSpeaker(serial, url) {
   }
 }
 
+// Si Android ha cerrado Chrome a la fuerza (al tablet le pasaba sin memoria), al abrir el altavoz otra vez Chrome no
+// reutiliza la pestaña de antes y se van acumulando. En cuanto se ve la nueva (la de la hora t), las más viejas de ese
+// mismo altavoz se cierran con las herramientas de desarrollo de Chrome, a las que adb llega con un forward. Nunca otras
+async function closeOldSpeakerTabs(serial, { port, id, t }) {
+  const local = Number(lastLine(await run(['-s', serial, 'forward', 'tcp:0', 'localabstract:chrome_devtools_remote'])));
+  if (!local) return 0;
+  const devtools = what => fetch(`http://127.0.0.1:${local}/json/${what}`, { signal: AbortSignal.timeout(5000) });
+  const openedAt = page => { // la hora t de una pestaña de este altavoz; null si es cualquier otra
+    try {
+      const url = new URL(page.url);
+      return page.type === 'page' && url.port === String(port) && url.searchParams.get('id') === id ? Number(url.searchParams.get('t')) || 0 : null;
+    } catch { return null; }
+  };
+  try {
+    for (let i = 0; i < 10; i++) {
+      const pages = await (await devtools('list')).json();
+      if (pages.some(p => openedAt(p) === t)) {
+        const old = pages.filter(p => openedAt(p) !== null && openedAt(p) < t);
+        for (const p of old) await devtools(`close/${p.id}`);
+        return old.length;
+      }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    return 0;
+  } finally {
+    await run(['-s', serial, 'forward', '--remove', `tcp:${local}`]).catch(() => {});
+  }
+}
+
 // Chrome no deja sonar una página hasta que alguien la toca. Toda la página es el botón de activar, así que vale tocar
 // en cualquier punto: (lado corto / 2, lado corto / 2) cae dentro tanto en vertical como en horizontal.
 // Con el móvil bloqueado (PIN o patrón) el toque caería en la pantalla de bloqueo: entonces no se toca
@@ -584,5 +613,5 @@ async function enableWifi(serial) {
 
 module.exports = {
   PKG, adbPath, sdkOf, startServer, serials, devices, apps, appAction, versions, install, openStore, pullApk, awake,
-  readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, touch, reverse, wifiIp, openSpeaker, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
+  readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, touch, reverse, wifiIp, openSpeaker, closeOldSpeakerTabs, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
 };
