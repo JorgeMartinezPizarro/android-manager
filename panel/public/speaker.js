@@ -246,25 +246,31 @@
     p.preload = 'auto';
     p.muted = SILENT;
   }
+  // Un segundo de silencio en bucle: lo que mantiene viva la página cuando no suena nada (keepOutput)
+  const hush = LIGHT ? new Audio(silence(8000)) : null;
+  if (hush) {
+    hush.loop = true;
+    hush.muted = SILENT;
+  }
   let unlocked = false; // Chrome deja sonar los <audio>: tras un toque, o porque ya dejaba
   let lag = 0.3; // s que tarda en sonar de verdad tras play(); se aprende de cada arranque
   let startTimer = null;
   const canPlay = () => (LIGHT ? unlocked : Boolean(ctx && ctx.state === 'running'));
 
-  // Para saber si Chrome ya deja sonar sin tocar: un WAV de una muestra de silencio
-  function silence() {
-    const v = new DataView(new ArrayBuffer(46));
+  // Un WAV de silencio. Con una sola muestra, para saber si Chrome ya deja sonar sin tocar
+  function silence(samples = 1) {
+    const v = new DataView(new ArrayBuffer(44 + samples * 2));
     const text = (at, s) => { for (let i = 0; i < s.length; i++) v.setUint8(at + i, s.charCodeAt(i)); };
-    text(0, 'RIFF'); v.setUint32(4, 38, true); text(8, 'WAVEfmt '); v.setUint32(16, 16, true);
+    text(0, 'RIFF'); v.setUint32(4, 36 + samples * 2, true); text(8, 'WAVEfmt '); v.setUint32(16, 16, true);
     v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 16000, true);
-    v.setUint16(32, 2, true); v.setUint16(34, 16, true); text(36, 'data'); v.setUint32(40, 2, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true); text(36, 'data'); v.setUint32(40, samples * 2, true);
     return URL.createObjectURL(new Blob([v], { type: 'audio/wav' }));
   }
 
   // Hay Chrome que pide el toque para cada <audio>: play() dentro del toque lo desbloquea y pause() lo deja como estaba
   function unlock() {
     unlocked = true;
-    for (const p of players) {
+    for (const p of players.concat(hush)) {
       if (!p.paused) continue;
       p.play().catch(() => {});
       p.pause();
@@ -370,12 +376,18 @@
   }
   if (LIGHT) setInterval(() => { if (current && state && track) schedule(); }, 500);
 
-  // Mientras la música va, una señal inaudible mantiene abierta la salida de audio, también si este móvil está callado o entre
-  // canciones. Si no, Chrome la cierra a los 30 s sin sonido; al reabrirla, la canción arranca desplazada y a los pocos segundos
-  // se recoloca de golpe, cada móvil en un momento distinto
+  // Una señal inaudible mantiene abierta la salida de audio. Si no, Chrome la cierra a los 30 s sin sonido; al reabrirla, la canción
+  // arranca desplazada y a los pocos segundos se recoloca de golpe, cada móvil en un momento distinto. Y con la página detrás y sin
+  // salida de audio, Android la congela a los pocos minutos: deja de oír al PC y no vuelve hasta que se desbloquea el móvil
   let keeper = null;
   function keepOutput(on) {
-    if (LIGHT || !ctx || on === Boolean(keeper)) return;
+    if (LIGHT) {
+      const quiet = on && !sounding(); // con la canción sonando no hace falta, y estos móviles andan justos de reproductores
+      if (quiet && unlocked && hush.paused) hush.play().catch(() => {});
+      if (!quiet && !hush.paused) hush.pause();
+      return;
+    }
+    if (!ctx || on === Boolean(keeper)) return;
     if (on) {
       keeper = ctx.createConstantSource();
       keeper.offset.value = 1e-5;
@@ -403,7 +415,8 @@
     const go = s && s.song && s.playing && s.on && s.startAt != null && track && track.song === s.song
       && canPlay() && clock.ok;
     if (go) schedule(); else stopSound();
-    keepOutput(Boolean(s && s.playing));
+    // También en pausa, salvo si la página está detrás en un móvil con pantalla: alguien lo estará usando y le gastaría la batería
+    keepOutput(Boolean(s && (s.playing || headless() || !document.hidden)));
     prepare(s);
     phase = !canPlay() ? 'tap' : error ? 'error' : loading ? 'loading' : sounding() ? 'playing' : track ? 'ready' : 'idle';
     render();
@@ -724,33 +737,43 @@
   window.altavoz = () => ({
     phase, song: current && current.song, rtt: clock.rtt, offset: offsetAt(performance.now()), ppm: clock.fit && Math.round(clock.fit.slope * 1e6), offBy, drift, fixes,
     audio: audioFit && { ppm: Math.round(audioFit.slope * 1e9), jitter: Math.round(audioFit.rms * 1e4) / 10, points: audioPoints.length },
-    light: LIGHT, lag, rate: current && (LIGHT ? current.el.playbackRate : current.rate), errors: current && current.errors.map(x => Math.round(x.e * 1e4) / 10),
+    heard: Math.round(performance.now() - heard), kept: LIGHT ? !hush.paused : Boolean(keeper), light: LIGHT, lag, rate: current && (LIGHT ? current.el.playbackRate : current.rate), errors: current && current.errors.map(x => Math.round(x.e * 1e4) / 10),
   });
 
   // ── Arranque ──
 
   // Si el PC dice que hay otra pestaña más nueva, esta se calla y se desconecta; al volver a mirarla, se recarga y pasa
   // a ser ella el altavoz
-  const events = new EventSource('/events?id=' + encodeURIComponent(ID) + '&p=' + PAGE);
-  events.addEventListener('replaced', () => {
-    replaced = true;
-    events.close();
-    linked = false;
-    state = null;
-    ahead = null;
-    update();
-  });
+  let events = null, heard = 0;
+  function connect() {
+    if (events) events.close();
+    heard = performance.now();
+    events = new EventSource('/events?id=' + encodeURIComponent(ID) + '&p=' + PAGE);
+    events.addEventListener('replaced', () => {
+      replaced = true;
+      events.close();
+      linked = false;
+      state = null;
+      ahead = null;
+      update();
+    });
+    events.addEventListener('ping', () => { heard = performance.now(); });
+    events.onopen = () => { heard = performance.now(); linked = true; lastKey = ''; update(); changeVolume(0); };
+    events.onmessage = e => {
+      heard = performance.now();
+      linked = true;
+      state = JSON.parse(e.data);
+      checkVersion(state.v);
+      update();
+    };
+    events.onerror = () => { linked = false; render(); }; // EventSource vuelve a intentarlo solo
+  }
+  connect();
+  // El PC da señales cada 15 s. Si pasa mucho sin oírlo, la conexión está muerta aunque Chrome la dé por abierta (ocurre al volver
+  // de estar dormido) y la página se quedaría sorda: se abre otra
+  setInterval(() => { if (!replaced && performance.now() - heard > 40000) connect(); }, 5000);
   document.addEventListener('visibilitychange', () => { if (replaced && !document.hidden) location.reload(); });
   document.addEventListener('pointerdown', () => { if (replaced) location.reload(); });
-  events.onopen = () => { linked = true; lastKey = ''; update(); changeVolume(0); };
-  events.onmessage = e => {
-    linked = true;
-    state = JSON.parse(e.data);
-    checkVersion(state.v);
-    update();
-  };
-  events.onerror = () => { linked = false; render(); }; // EventSource vuelve a intentarlo solo
-
   // Sin un toque se queda en pausa; si Chrome ya deja sonar, no hace falta tocar
   if (LIGHT) new Audio(silence()).play().then(() => { unlocked = true; update(); }, () => {});
   else audio();

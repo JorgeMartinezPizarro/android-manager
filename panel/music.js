@@ -29,6 +29,7 @@ const CAL = '*calibrar'; // la que suena mientras el panel calibra los altavoces
 const isTest = id => id === TEST || id === CAL;
 const LEAD = 800; // ms entre que el PC fija la hora de empezar y que empieza: lo que tarda el aviso en llegar a todos
 const WAIT = 15000; // lo que se espera, como mucho, a que todos los altavoces hayan cargado la canción
+const DEAF = 75000; // una página viva da señales al menos cada minuto, aunque esté detrás; sin ellas, es que Android la ha congelado
 
 // El reloj del PC con decimales; el de los altavoces se ajusta a este
 const now = () => performance.timeOrigin + performance.now();
@@ -113,6 +114,7 @@ function speaker(id) {
 const pageVersion = () => ['speaker.html', 'speaker.js']
   .map(f => { try { return fs.statSync(path.join(PUBLIC, f)).mtimeMs; } catch { return 0; } }).join('-');
 const linked = sp => sp.clients.size > 0;
+const deaf = sp => linked(sp) && Date.now() - (sp.reportedAt || 0) > DEAF; // sigue conectada, pero ni oye al PC ni va a sonar
 
 // ── Lo que suena ──
 
@@ -144,8 +146,8 @@ function broadcast() {
   scheduleEnd();
 }
 
-// Los altavoces que tienen que sonar y aún no han cargado la canción; los que esperan un toque o fallan no cuentan
-const waitingFor = () => [...speakers].filter(([id, sp]) => linked(sp) && rooms[id]?.on
+// Los altavoces que tienen que sonar y aún no han cargado la canción; los que esperan un toque, fallan o están congelados no cuentan
+const waitingFor = () => [...speakers].filter(([id, sp]) => linked(sp) && rooms[id]?.on && !deaf(sp)
   && !['tap', 'error'].includes(sp.status.phase)
   && !(sp.status.song === st.song && ['ready', 'playing'].includes(sp.status.phase)));
 
@@ -179,7 +181,7 @@ function scheduleEnd() {
 
 // Cuántos altavoces van a sonar; si ninguno, el aviso para el panel
 function warning() {
-  const n = [...speakers].filter(([id, sp]) => linked(sp) && rooms[id]?.on && sp.status.phase !== 'tap').length;
+  const n = [...speakers].filter(([id, sp]) => linked(sp) && rooms[id]?.on && !deaf(sp) && sp.status.phase !== 'tap').length;
   return n ? '' : 'No suena en ningún móvil: abre el altavoz en los que quieras y quítales el silencio';
 }
 
@@ -553,7 +555,7 @@ function status() {
       const error = sp.tapError || sp.lightError || late;
       return [id, {
         on: Boolean(room.on), delay: room.delay || 0, lan: Boolean(room.lan), linked: linked(sp), screen: room.screen !== false,
-        ...(linked(sp) ? sp.status : {}), ...(error ? { error } : {}),
+        ...(linked(sp) ? { ...sp.status, deaf: deaf(sp) } : {}), ...(error ? { error } : {}),
       }];
     })),
   };
@@ -632,12 +634,13 @@ function sendSong(req, res, id) {
   });
 }
 
-// Avisos del PC a cada página (Server-Sent Events): el estado completo cada vez que cambia algo
+// Avisos del PC a cada página (Server-Sent Events): el estado completo cada vez que cambia algo, y un latido cada 15 s para que la
+// página sepa que la conexión sigue viva (si el móvil se duerme, puede quedar muerta sin que ninguno de los dos se entere)
 function events(req, res, id) {
   if (!ID.test(id || '')) return reply(res, 400, 'text/plain', 'Falta el móvil');
   if (!rooms[id]) remember(id); // una página abierta a mano también es un altavoz
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
-  const ping = setInterval(() => res.write(': ping\n\n'), 15000);
+  const ping = setInterval(() => res.write('event: ping\ndata: {}\n\n'), 15000);
   req.on('close', () => clearInterval(ping));
   // Cada móvil, una sola pestaña de altavoz: la más nueva. A las demás se les dice que paren (y siguen conectadas, para
   // que no vuelvan a llamar); las de antes de este cambio no mandan su hora y pierden ante cualquiera que sí la mande
@@ -649,6 +652,7 @@ function events(req, res, id) {
   sp.clients.clear();
   res.write(`retry: 3000\ndata: ${JSON.stringify(view(id))}\n\n`);
   sp.clients.add(res);
+  sp.reportedAt = Date.now();
   sp.openedAt = 0; // ya llegó: si luego se va, no es que no se abriera
   req.on('close', () => {
     if (!sp.clients.delete(res)) return; // una pestaña vieja que se cierra

@@ -1156,6 +1156,7 @@ function updateMusic() {
     const room = rooms[tr.dataset.id];
     const [text, kind, tip] = !room?.linked ? (room?.error ? ['No se abrió', 'bad', '']
       : ['Sin abrir', '', 'Pulsa «Abrir»: el móvil abre la página de altavoz en Chrome'])
+      : room.deaf ? ['Dormido', 'diff', 'Android ha congelado su página y no oye al PC: no sonará ni hará esperar a los demás. Vuelve sola al desbloquear el móvil']
       : room.phase === 'tap' ? SPEAKER_STATE.tap
       : room.error ? ['Error', 'bad', '']
       // «Listo» es que sonará al dar al play: no vale si está silenciado o si la música ya va y él aún no ha empezado

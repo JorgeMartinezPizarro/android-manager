@@ -144,8 +144,10 @@ Consejo: reserva en el router una IP fija para cada móvil.
     gasta mucho menos (para un móvil que no hace de mando, o que carga despacio). Su página deja de pedir la pantalla
     encendida y descansa a los 15 s, y entonces el panel se la apaga; si se enciende con la página detrás (la pantalla de
     bloqueo, al tocarlo o al empezar a cargar), la apaga a los 30 s. Si Android duerme Chrome y ese móvil deja de dar
-    señales mientras suena la música, el panel le enciende la pantalla un momento para despertarlo. Otro toque al botón
-    le devuelve la pantalla. En los móviles viejos, a los que les cuesta mover la página, no hace falta esperar: una vez
+    señales mientras suena la música, el panel le enciende la pantalla un momento para despertarlo. Para que no llegue a
+    pasar, también en pausa o silenciado su página mantiene abierta la salida de audio, con una señal que no se oye. Si aun
+    así Android la congela, el panel lo marca como «Dormido» y no hace esperar a los demás; vuelve al desbloquear el móvil.
+    Otro toque al botón le devuelve la pantalla. En los móviles viejos, a los que les cuesta mover la página, no hace falta esperar: una vez
     que suena, se bloquea con su botón de encendido y sigue sonando.
   - Pulsando en la barra de la canción se salta a ese punto. **Aleatorio** sigue con una canción cualquiera en vez de
     con la siguiente, y el **temporizador** pausa la música al cabo de 15 minutos a 2 horas.
