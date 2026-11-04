@@ -364,7 +364,7 @@ function remember(id, serial, lan) {
   if (serial) {
     room.serial = serial;
     if (lan) room.lan = lan;
-    else delete room.lan;
+    else if (lan === null) delete room.lan; // sin lan (ya estaba abierto) se queda como esté: su página sigue llegando por donde llegaba
   }
   saveRooms();
 }
@@ -475,6 +475,21 @@ async function light(id) {
   }
 }
 
+// El cable y la wifi de un móvil son dos direcciones distintas para adb. Si la de un altavoz ya no está (lo han desenchufado, o
+// ha vuelto por cable) y ha aparecido otra, se mira si es él; si no, el panel no podría apagarle la pantalla ni bajarle el volumen
+async function followSerials() {
+  const attached = await adb.serials();
+  const lost = room => room.serial && !attached.includes(room.serial);
+  const fresh = attached.filter(s => !Object.values(rooms).some(room => room.serial === s));
+  if (!fresh.length || !Object.values(rooms).some(lost)) return;
+  for (const serial of fresh) {
+    const room = rooms[await adb.serialno(serial).catch(() => '')];
+    if (!room || !lost(room)) continue;
+    room.serial = serial;
+    saveRooms();
+  }
+}
+
 // Los altavoces sin pantalla, vigilados cada 15 s:
 // - Android puede dormir Chrome si se queda mucho rato sin sonar. Si la música suena y uno sigue conectado pero lleva un
 //   rato sin dar señales, o si espera un toque (recién recargada), se le enciende la pantalla y se quita la de bloqueo
@@ -487,6 +502,7 @@ async function watchHeadless() {
   if (watching) return;
   watching = true;
   try {
+    await followSerials().catch(() => {});
     for (const [id, room] of Object.entries(rooms)) {
       const sp = speakers.get(id);
       if (room.screen !== false || !room.serial || !sp) continue;

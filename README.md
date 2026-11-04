@@ -70,7 +70,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
 - **Dispositivos**: los móviles conectados con batería, conexión, espacio libre en la memoria interna (en rojo si
   queda menos de 1 GB o del 10 %; al pasar el ratón, el total y lo ocupado) y un nombre que tú eliges.
   **Ver pantalla** abre la pantalla del móvil en una ventana del PC (por wifi tarda unos segundos) y lo manejas
-  con el ratón y el teclado. La ventana sigue abierta aunque cierres el panel.
+  con el ratón y el teclado. La ventana sigue abierta aunque cierres el panel. El **candado** apaga su pantalla de un
+  toque; si hace de altavoz, sigue sonando.
   Usa [scrcpy](https://github.com/Genymobile/scrcpy): el instalador lo lleva dentro; desde el código, se instala una
   vez con `winget install Genymobile.scrcpy`. scrcpy necesita Android 5: en uno más viejo la pantalla se ve dentro del
   panel a base de capturas (una cada segundo o dos), y un clic es un toque y arrastrar, deslizar el dedo.
@@ -86,7 +87,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
     reproduce la alarma en su reproductor de música con la música al máximo. Si no tiene ninguna de las dos
     cosas, lo dice.
   - **Desbloquear** solo quita el bloqueo de deslizar. Con PIN o patrón, adb no puede saltárselo: escríbelo
-    tú desde «Ver pantalla».
+    tú desde «Ver pantalla». En Android 4 no siempre lo quita (en los Samsung, no): enciende la pantalla y hay que
+    deslizar en el móvil. En uno que solo hace de altavoz, lo más cómodo es poner su bloqueo de pantalla en «Ninguno».
   - **Sus apps** (las tuyas y, si quieres, las del sistema) para abrirlas, desactivarlas, desinstalarlas o
     restaurar las del sistema que hayas quitado.
 - **Apps**, en dos pestañas: **Favoritas**, las apps que quieres, y **Limpiar**, todo lo demás.
@@ -143,7 +145,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
     encendida y descansa a los 15 s, y entonces el panel se la apaga; si se enciende con la página detrás (la pantalla de
     bloqueo, al tocarlo o al empezar a cargar), la apaga a los 30 s. Si Android duerme Chrome y ese móvil deja de dar
     señales mientras suena la música, el panel le enciende la pantalla un momento para despertarlo. Otro toque al botón
-    le devuelve la pantalla.
+    le devuelve la pantalla. En los móviles viejos, a los que les cuesta mover la página, no hace falta esperar: una vez
+    que suena, se bloquea con su botón de encendido y sigue sonando.
   - Pulsando en la barra de la canción se salta a ese punto. **Aleatorio** sigue con una canción cualquiera en vez de
     con la siguiente, y el **temporizador** pausa la música al cabo de 15 minutos a 2 horas.
   - La que va a sonar después sale debajo del título («Después: …») y los móviles la van preparando mientras suena la
@@ -158,15 +161,16 @@ Consejo: reserva en el router una IP fija para cada móvil.
     si se oye después, bájalo. Va de milisegundo en milisegundo con − y +, o escribe el número. Un altavoz Bluetooth suele
     ir un poco por detrás: ese móvil, con retraso negativo.
   - **Calibrar** lo hace con un micrófono en vez de a oído: el del PC o, abriendo el panel en el móvil, el del móvil.
-    Hace sonar cada altavoz encendido por su cuenta (los silenciados no se tocan) con un barrido corto cada segundo, lo
-    graba y busca cuándo llega cada barrido, con menos de 1 ms de error aunque haya eco. Lo que tarda el micrófono es
-    igual para todos y se anula, así que queda cuánto antes o después se oye cada uno. **Medir todos** los mide seguidos
-    desde donde está el micrófono: ponlo donde escuchas. Con el móvil se puede ir **habitación por habitación**: junto a
-    cada altavoz (a un par de pasos, siempre a la misma distancia), su **Medir**; entre uno y otro la calibración calla y el
-    micrófono sigue abierto, así que lo medido se puede comparar aunque estén lejos. El móvil pone su reloj en hora con el
-    del PC antes de cada medida y no se apaga mientras el diálogo está abierto. Con dos o más medidos enseña cuánto se oye
-    cada uno respecto al resto y los retrasos que los cuadran («Aplicar» los pone); al cerrar, la música vuelve por donde
-    iba. Unos 10 s por altavoz; el que va en modo ligero, hasta 45 s, porque tarda más en cuadrarse al arrancar. El
+    Va **por pasos**: en cada uno marcas los altavoces que se oyen desde donde estás, estén o no silenciados (de primeras,
+    los encendidos; si su nombre es «Sala - Móvil», se marcan por salas). Cada uno suena por su cuenta con un barrido corto
+    cada segundo, y se graba y se busca cuándo llega cada barrido, con menos de 1 ms de error aunque haya eco. Lo que tarda el
+    micrófono es igual para todos y se anula, así que queda cuánto antes o después se oye cada uno. Para seguir en **otra
+    sala**, ponte donde se oigan las dos (en la puerta, por ejemplo) y marca uno ya medido junto con los nuevos: ese móvil
+    une los dos pasos, y los ya medidos no cambian entre ellos. Entre paso y paso la calibración calla y el micrófono sigue
+    abierto. Un paso sin ningún móvil compartido se compara como si hubieras medido a la misma distancia, y «Deshacer el
+    último paso» lo quita. El móvil pone su reloj en hora con el del PC antes de cada medida y no se apaga mientras el diálogo
+    está abierto. Con dos o más medidos enseña cuánto se oye cada uno respecto al resto y los retrasos que los cuadran
+    («Aplicar» los pone); al cerrar, la música vuelve por donde iba. Unos 10 s por altavoz; el que va en modo ligero, hasta 45 s, porque tarda más en cuadrarse al arrancar. El
     navegador pide permiso para el micrófono, y solo lo da en páginas seguras: en el PC (localhost) o por https, que es
     como se abre el panel desde otro aparato.
   - La página del altavoz ocupa toda la pantalla de cada móvil y hace de mando: arriba la canción (en una línea: si no
@@ -177,7 +181,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
     grande y buscador; se cierra al elegir una, con la X o con el botón de volver del móvil. La pantalla se queda encendida mientras la página está delante
     (si se apaga, Android puede dormir Chrome). Déjalos enchufados. Si nadie la toca en 3 minutos descansa: la página se queda
     en negro y el panel baja el brillo del móvil al mínimo. En las pantallas OLED el negro apaga los
-    píxeles, así que no se ve nada ni se queda grabada la imagen. Los móviles que en manual no bajan del todo (alguno se
+    píxeles, así que no se ve nada ni se queda grabada la imagen; en las LCD la luz de fondo sigue encendida y se nota un
+    resplandor tenue (para que quede oscura del todo, «Sin pantalla»). Los móviles que en manual no bajan del todo (alguno se
     queda en 17 de 255) se dejan en automático con el ajuste al mínimo, que a oscuras sí llega a 1. Vuelve al tocar la
     pantalla o arrastrar el dedo por ella, con el brillo que tenía (también el automático). El toque que la despierta no pulsa
     nada: el botón que hubiera debajo se pulsa con el siguiente.
@@ -194,11 +199,12 @@ Consejo: reserva en el router una IP fija para cada móvil.
     con «Pantalla encendida mientras carga» (en Ajustes).
 - **Ajustes**: un perfil común para todos los móviles: modo oscuro, brillo automático, cuándo se apaga la
   pantalla, tamaño de letra, giro automático, pantalla encendida mientras carga y animaciones.
-  Cada casilla muestra lo que tiene cada móvil: verde si ya está como debe, naranja si falta cambiarlo y «—» si su
-  Android no lo tiene (el modo oscuro necesita Android 10). Lo que dejes en «No tocar» no se cambia.
-  Si algún móvil lo necesita distinto (uno que solo es altavoz, otro que solo hace de mando), pulsa su casilla: le
-  pones su propio valor, «No tocar aquí» o «Como el perfil», y se cambia al momento. Las casillas con borde de puntos
-  son las que ese móvil tiene distintas; se guardan por su número de serie. El fondo de pantalla y los temas del
+  Arriba está el formulario para todos; lo que dejes en «No tocar» no se cambia. Debajo, cada móvil tiene su ficha con
+  la lista de sus ajustes: verde si ya está como debe, naranja si falta cambiarlo y «—» si su Android no lo tiene (el
+  modo oscuro necesita Android 10). También funcionan en Android 4.2; en 4.1 o anterior no se pueden cambiar.
+  Si algún móvil lo necesita distinto (uno que solo es altavoz, otro que solo hace de mando), pulsa ese valor en su
+  ficha: le pones su propio valor, «No tocar aquí» o «Como el perfil», y se cambia al momento. Los valores con borde de
+  puntos son los que ese móvil tiene distintos; se guardan por su número de serie. El fondo de pantalla y los temas del
   fabricante no se pueden poner desde el PC.
 - **Tema del panel**: el botón de la paleta, arriba a la derecha, abre la lista de temas con una muestra de sus
   colores: **Clásico** (el verde de siempre, en claro u oscuro según el sistema; el que sale si no eliges otro), **Neón** (noche de los 80, con rejilla y letras que
@@ -237,7 +243,7 @@ cerrado. Las versiones anteriores guardaban estos ficheros junto al proyecto; el
 
 El panel escucha en este PC. Con «Abrir el panel desde otros dispositivos de casa» (al final de Dispositivos) escucha
 también en las IP privadas del PC y se abre desde el móvil, la tablet u otro ordenador de la misma red, en la dirección
-que enseña (por ejemplo https://192.168.1.12:8765), o apuntando con la cámara del móvil al código QR que sale debajo, que
+que enseña (por ejemplo https://192.168.1.50:8765), o apuntando con la cámara del móvil al código QR que sale debajo, que
 abre directamente la música. Por la red va por https, para que el navegador deje usar el micrófono al calibrar: en el
 mismo puerto, quien llega por http se pasa a https. El certificado lo hace el propio panel la primera vez (se guarda en
 `datos/panel-https.json` y vale un año; se rehace solo antes de caducar o si el PC estrena IP), así que cada navegador

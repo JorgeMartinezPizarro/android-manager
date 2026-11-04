@@ -219,6 +219,7 @@ function deviceCard(d) {
     <div class="actions">
       ${ready ? `<a class="btn primary" href="#/device/${enc(d.serial)}" title="Acciones rápidas y sus apps">${ICON.control}Controlar</a>` : ''}
       ${ready ? iconBtn('screen', ICON.look, 'Ver pantalla: verla y manejarla desde el PC') : ''}
+      ${ready ? `<button class="btn icon" data-act="quick" data-action="lock" title="Bloquear: apaga la pantalla. Si hace de altavoz, sigue sonando" aria-label="Bloquear">${ICON.lock}</button>` : ''}
       ${ready && !d.wifi ? iconBtn('wifi', ICON.wifi, 'Pasar a Wi-Fi: seguir conectado sin el cable') : ''}
       ${retry ? '<button class="btn primary" data-act="reconnect">Reintentar</button>' : ''}
       ${d.wifi ? iconBtn('disconnect', ICON.unplug, 'Desconectar', 'ghost end') : ''}
@@ -546,12 +547,12 @@ function showAppsTab(tab) {
 function catalogHtml({ apps, devices, auto, last }) {
   const pending = (d, a) => d.status?.[a.pkg] && !['ok', 'skip'].includes(d.status[a.pkg].state);
   const total = devices.reduce((n, d) => n + apps.filter(a => pending(d, a)).length, 0);
-  // En la cabecera de cada móvil, poner de una vez las favoritas que le faltan
-  const head = d => {
+  // Poner de una vez en un móvil las favoritas que le faltan
+  const phones = devices.map(d => {
     const n = apps.filter(a => pending(d, a)).length;
-    return `<th class="dev-col" data-serial="${esc(d.serial)}">${esc(title(d))}${n ? `<button class="btn small dev-act" data-act="sync-phone"
-      title="Instala en ${esc(title(d))} las ${n} favoritas que le faltan o tienen versión nueva">Poner (${n})</button>` : ''}</th>`;
-  };
+    return n ? `<button class="btn small" data-act="sync-phone" data-serial="${esc(d.serial)}"
+      title="Instala en ${esc(title(d))} las ${n} favoritas que le faltan o tienen versión nueva">Poner en ${esc(title(d))} (${n})</button>` : '';
+  }).join('');
   const bar = `<div class="card bar">
       <button class="btn primary" data-act="add-app">＋ Añadir favorita</button>
       <button class="btn" data-act="sync-all" ${total ? '' : 'disabled'}>${total ? `Instalar lo pendiente (${total})` : 'Todo al día ✓'}</button>
@@ -579,15 +580,13 @@ function catalogHtml({ apps, devices, auto, last }) {
     </tr>`).join('');
   return `${bar}
     ${devices.length ? '' : '<p class="problem">No hay móviles listos: conéctalos en <a href="#/">Dispositivos</a>.</p>'}
-    <div class="card flush scroll-x"><table class="matrix catalog">
-      <thead><tr><th>Favorita</th>${devices.map(head).join('')}<th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
+    ${phones ? `<div class="bar">${phones}</div>` : ''}
+    <div class="card flush"><table class="matrix catalog"><tbody>${rows}</tbody></table></div>
     <p class="legend muted small">
       <span><span class="st ok">✓</span> instalada</span><span><span class="st update">↑</span> hay versión nueva</span>
       <span><span class="st missing">+</span> falta</span><span><span class="st missing">▶</span> falta, de Google Play</span>
       <span><span class="st skip">–</span> ese móvil no la necesita</span><span><span class="st error">!</span> falló</span>
-      <span>· Pulsa una celda para instalarla, quitarla de ese móvil o marcar que no la necesita.</span></p>`;
+      <span>· Pulsa el estado de un móvil para instalarla, quitarla de ahí o marcar que no la necesita.</span></p>`;
 }
 
 function statusCell(d, a) {
@@ -672,13 +671,13 @@ function renderCleanup() {
   const rows = state.cleanRows = cleanupRows(data);
   const total = removable().length;
   $('#clean-count').textContent = total ? ` (${total})` : '';
-  const head = d => {
+  const phones = devices.map(d => {
     const n = removable(d.serial).length;
-    return `<th class="dev-col" data-serial="${esc(d.serial)}">${esc(title(d))}${n ? `<button class="btn small danger dev-act" data-act="clean-phone"
-      title="Quita de ${esc(title(d))} las ${n} apps que sobran">Limpiar (${n})</button>` : ''}</th>`;
-  };
+    return n ? `<button class="btn small danger" data-act="clean-phone" data-serial="${esc(d.serial)}"
+      title="Quita de ${esc(title(d))} las ${n} apps que sobran">Limpiar ${esc(title(d))} (${n})</button>` : '';
+  }).join('');
   const group = (label, list) => (list.length
-    ? `<tr class="group"><th colspan="${devices.length + 3}">${label}</th></tr>${list.map(cleanRow).join('')}` : '');
+    ? `<tr class="group"><th>${label}</th></tr>${list.map(cleanRow).join('')}` : '');
   $('#cleanup').innerHTML = `
     <div class="card bar">
       <span>${total ? `Sobran <strong>${total}</strong> ${total === 1 ? 'app' : 'apps'} en los móviles` : 'Los móviles están limpios ✓'}</span>
@@ -686,8 +685,8 @@ function renderCleanup() {
       <button class="btn danger" data-act="clean-all" ${total ? '' : 'disabled'}>Limpiar todos…</button>
     </div>
     ${devices.filter(d => d.error).map(d => `<p class="problem">${esc(title(d))}: ${esc(d.error)}</p>`).join('')}
-    ${rows.length ? `<div class="card flush scroll-x"><table class="matrix cleanup">
-      <thead><tr><th></th><th>App</th>${devices.map(head).join('')}<th></th></tr></thead>
+    ${phones ? `<div class="bar">${phones}</div>` : ''}
+    ${rows.length ? `<div class="card flush"><table class="matrix cleanup">
       <tbody>${group('Instaladas por ti', rows.filter(r => !r.system))}${group('Del sistema', rows.filter(r => r.system))}</tbody>
     </table></div>
     <p class="legend muted small"><span><span class="st update">●</span> sobra: púlsala para quitarla de ese móvil</span>
@@ -993,6 +992,7 @@ const ICON = {
   info: icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>', 15),
   control: icon('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>', 18),
   wifi: icon('<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/>', 18),
+  lock: icon('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>', 18),
   unplug: icon('<path d="m19 5 3-3M2 22l3-3M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4zM7.5 13.5 10 11M10.5 16.5 13 14M12 6l6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0z"/>', 18),
   download: icon('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>'),
   store: icon('<path d="M7 4.5v15l12-7.5z"/>'),
@@ -1158,6 +1158,9 @@ function updateMusic() {
       : ['Sin abrir', '', 'Pulsa «Abrir»: el móvil abre la página de altavoz en Chrome'])
       : room.phase === 'tap' ? SPEAKER_STATE.tap
       : room.error ? ['Error', 'bad', '']
+      // «Listo» es que sonará al dar al play: no vale si está silenciado o si la música ya va y él aún no ha empezado
+      : !room.on && room.phase !== 'loading' ? ['Silenciado', '', 'No suena porque está silenciado: pulsa el altavoz de su fila']
+      : room.phase === 'ready' && now.playing ? ['Preparando…', '', 'La música ya va y este móvil aún no ha empezado a sonar']
       : SPEAKER_STATE[room.phase] || ['Conectado', '', ''];
     // Sonando, lo que se ha ido de donde debería ir (lo corrige solo, acelerando o frenando un poco); si no, el margen de su reloj
     const margin = room?.rtt != null ? `Su reloj puede desviarse ±${Math.max(1, Math.round(room.rtt / 2))} ms del del PC` : '';
@@ -1169,9 +1172,9 @@ function updateMusic() {
     const off = Math.round(room?.off ?? 0);
     const clock = room?.linked && room.phase === 'playing' && drift
       ? `<span class="muted small sp-clock" title="${esc(drift)}">${off < 0 ? '−' : '+'}${Math.abs(off)} ms</span>` : '';
-    tr.querySelector('.sp-state').innerHTML = `<span class="val ${kind}" title="${esc([tip, room?.linked && margin].filter(Boolean).join('. '))}">${esc(text)}</span>${clock}`
-      + (room?.lan ? `<span class="tag" title="Su Android es viejo: llega al PC por la wifi y Chrome no le deja mantener la pantalla encendida. Enchufado, con «Pantalla encendida mientras carga» (Ajustes), no se apaga. Déjalo enchufado">wifi</span>` : '')
-      + (room?.screen === false ? '<span class="tag" title="Solo altavoz: suena con la pantalla apagada">sin pantalla</span>' : '')
+    tr.querySelector('.sp-state').innerHTML = `<div class="sp-line"><span class="val ${kind}" title="${esc([tip, room?.linked && margin].filter(Boolean).join('. '))}">${esc(text)}</span>${clock}`
+      + (room?.lan ? `<span class="sp-wifi" role="img" aria-label="Por wifi" title="Por wifi. Su Android es viejo: llega al PC por la wifi y Chrome no le deja mantener la pantalla encendida. Enchufado, con «Pantalla encendida mientras carga» (Ajustes), no se apaga. Déjalo enchufado">${ICON.wifi}</span>` : '')
+      + '</div>'
       + (room?.error ? `<div class="err-text small">${esc(room.error)}</div>` : '');
     // Los botones de icono se rehacen solo al cambiar, para no pisar uno que está trabajando
     const on = room ? room.on : true;
@@ -1181,8 +1184,8 @@ function updateMusic() {
       mode.dataset.on = screen;
       mode.innerHTML = screen ? ICON.screenOn : ICON.screenOff;
       mode.classList.toggle('headless', !screen);
-      mode.title = screen ? 'Con pantalla: se ve el reproductor. Pulsa para dejarlo solo de altavoz, con la pantalla apagada (gasta menos)'
-        : 'Sin pantalla: solo altavoz, con la pantalla apagada. Pulsa para volver a ver el reproductor';
+      mode.title = screen ? 'Con pantalla: se ve el reproductor, y a los 3 minutos sin tocarla se queda en negro con el brillo al mínimo (en una pantalla LCD se nota una luz tenue). Pulsa para dejarlo solo de altavoz, con la pantalla apagada del todo (gasta menos)'
+        : 'Sin pantalla: solo altavoz, con la pantalla apagada. Si tarda en apagarse, bloquéalo con su botón de encendido: sigue sonando. Pulsa para volver a ver el reproductor';
       mode.setAttribute('aria-label', screen ? 'Dejarlo sin pantalla' : 'Volver a ver la pantalla');
     }
     const mute = tr.querySelector('.mute');
@@ -1407,44 +1410,63 @@ async function measureRoom(rec, tpl, { startAt, delay, light }, cancelled, progr
   return null;
 }
 
-// Los que se calibran: abiertos, sonando y encendidos (los silenciados se dejan como están). El micrófono se abre con la
-// primera medida y sigue abierto hasta cerrar; al cerrar, vuelve la música como estaba
+// La sala de un móvil, si su nombre es «Sala - Móvil»
+const roomOf = d => (title(d).includes(' - ') ? title(d).split(' - ')[0].trim() : '');
+
+// Por pasos: en cada uno se marcan los altavoces que se oyen desde donde se está (de primeras, los encendidos), estén o no
+// silenciados. El micrófono se abre con la primera medida y sigue abierto hasta cerrar; al cerrar, vuelve la música como estaba
 async function calibrate() {
   if (!navigator.mediaDevices?.getUserMedia) return toast('Este navegador no deja usar el micrófono aquí: abre el panel por https', 'error');
   await refreshMusic();
   const { rooms } = state.music;
-  const list = state.devices.filter(d => rooms[d.serialno]?.on && rooms[d.serialno].linked
-    && !['tap', 'error'].includes(rooms[d.serialno].phase));
-  if (list.length < 2) return toast('Para cuadrarlos hacen falta al menos dos altavoces abiertos y sin silenciar', 'error');
+  const list = state.devices.filter(d => rooms[d.serialno]?.linked && !['tap', 'error'].includes(rooms[d.serialno].phase));
+  if (list.length < 2) return toast('Para cuadrarlos hacen falta al menos dos altavoces abiertos', 'error');
+  const groups = [...new Set(list.map(roomOf).filter(Boolean))];
   const dlg = $('#dialog');
   dlg.className = 'wide';
   dlg.innerHTML = `<form method="dialog">
       <h2>Calibrar con el micrófono</h2>
       <div class="dlg-body">
-        <p>Cada altavoz sonará por su cuenta con unos barridos cortos (unos 10 s; los Android 4 o anteriores, algo más) y ${HERE} medirá
-          cuándo llega cada uno. <strong>Desde donde escuchas:</strong> «Medir todos». <strong>Habitación por
-          habitación:</strong> ponte a un par de pasos de cada altavoz y pulsa su «Medir»; lo medido se guarda mientras
-          vas al siguiente.</p>
-        <table class="cal"><tbody>${list.map(d => `<tr data-id="${esc(d.serialno)}"><td>${esc(title(d))}</td>
-          <td class="cal-state muted">Sin medir</td>
-          <td class="cal-go"><button class="btn small" type="button" data-measure="${esc(d.serialno)}">Medir</button></td></tr>`).join('')}</tbody></table>
-        <p class="muted small" id="cal-note">Los silenciados no se miden. El navegador pedirá permiso para usar el micrófono.
-          Al cerrar, vuelve la música como estaba.</p>
+        <p>Cada altavoz marcado sonará por su cuenta con unos barridos cortos (unos 10 s; los Android 4 o anteriores, algo más) y ${HERE}
+          medirá cuándo llega cada uno. <strong>Marca los que se oyen bien desde donde estás</strong> y mídelos. <strong>Para seguir en
+          otra sala</strong>, ponte donde se oigan las dos (en la puerta, por ejemplo) y marca uno ya medido junto con los nuevos: ese
+          móvil une los dos pasos, y los ya medidos no cambian entre ellos.</p>
+        ${groups.length > 1 ? `<p class="cal-rooms"><span class="muted small">Marcar sala:</span>${groups.map(g => `<button class="btn small" type="button"
+          data-room="${esc(g)}">${esc(g)}</button>`).join('')}</p>` : ''}
+        <table class="cal"><tbody>${list.map(d => `<tr data-id="${esc(d.serialno)}"><td><label class="cal-pick"><input type="checkbox"
+          data-pick="${esc(d.serialno)}" ${rooms[d.serialno].on ? 'checked' : ''}>${esc(title(d))}</label></td>
+          <td class="cal-state muted">Sin medir</td></tr>`).join('')}</tbody></table>
+        <p class="muted small" id="cal-note">El navegador pedirá permiso para usar el micrófono. Al cerrar, vuelve la música como estaba.</p>
       </div>
-      <menu><button class="btn" type="button" id="cal-cancel">Cancelar</button><button class="btn" type="button" id="cal-all">Medir todos</button>
+      <menu><button class="btn" type="button" id="cal-cancel">Cancelar</button><button class="btn" type="button" id="cal-undo" hidden>Deshacer el último paso</button>
+        <button class="btn" type="button" id="cal-measure">Medir</button>
         <button class="btn primary" type="button" id="cal-apply" disabled>Aplicar</button></menu>
     </form>`;
   dlg.showModal();
-  const cal = { results: new Map(), busy: false, cancelled: false, rec: null, startAt: null, running: null };
-  cal.row = d => dlg.querySelector(`tr[data-id="${CSS.escape(d.serialno)}"] .cal-state`);
-  const run = targets => {
-    if (cal.busy) return;
+  const cal = { steps: [], failed: new Set(), busy: false, cancelled: false, rec: null, startAt: null, running: null };
+  cal.row = id => dlg.querySelector(`tr[data-id="${CSS.escape(id)}"] .cal-state`);
+  const box = d => dlg.querySelector(`[data-pick="${CSS.escape(d.serialno)}"]`);
+  calButtons(cal);
+  dlg.querySelector('.cal').onchange = () => calButtons(cal);
+  for (const btn of dlg.querySelectorAll('[data-room]')) {
+    btn.onclick = () => {
+      const boxes = list.filter(d => roomOf(d) === btn.dataset.room).map(box), all = boxes.every(b => b.checked);
+      for (const b of boxes) b.checked = !all;
+      calButtons(cal);
+    };
+  }
+  $('#cal-measure').onclick = () => {
+    const targets = list.filter(d => box(d).checked);
+    if (cal.busy || !targets.length) return;
     cal.running = measure(cal, targets).catch(e => {
       $('#cal-note').textContent = e.name === 'NotAllowedError' ? 'Sin permiso para el micrófono: dalo en el candado de la barra de direcciones' : e.message;
     });
   };
-  for (const btn of dlg.querySelectorAll('[data-measure]')) btn.onclick = () => run(list.filter(d => d.serialno === btn.dataset.measure));
-  $('#cal-all').onclick = () => run(list);
+  $('#cal-undo').onclick = () => {
+    cal.steps.pop();
+    calButtons(cal);
+    showProposal(cal);
+  };
   // Al acabar, sin esperar al evento close del diálogo: con la página oculta (el móvil bloqueado) no llega hasta que se ve
   const finish = () => {
     if (cal.cancelled) return;
@@ -1461,11 +1483,11 @@ async function calibrate() {
   dlg.addEventListener('close', finish, { once: true }); // con Esc
 }
 
-// Mide esos altavoces uno tras otro y luego calla la calibración (para no oírla mientras se va al siguiente)
+// Un paso: mide esos altavoces uno tras otro y luego calla la calibración (para no oírla mientras se va al siguiente sitio)
 async function measure(cal, targets) {
   cal.busy = true;
   calButtons(cal);
-  const note = $('#cal-note');
+  const note = $('#cal-note'), step = new Map();
   try {
     if (!cal.rec) {
       note.textContent = 'Abriendo el micrófono…';
@@ -1477,7 +1499,7 @@ async function measure(cal, targets) {
     }
     for (const d of targets) {
       if (cal.cancelled) return;
-      const room = state.music.rooms[d.serialno], row = cal.row(d);
+      const room = state.music.rooms[d.serialno], row = cal.row(d.serialno);
       row.className = 'cal-state';
       row.textContent = 'Arrancando…';
       await syncClock();
@@ -1491,10 +1513,12 @@ async function measure(cal, targets) {
           : `Escuchando… (sin oírlo ${found.length} ${found.length === 1 ? 'vez' : 'veces'})`;
       });
       if (cal.cancelled) return;
-      if (r) cal.results.set(d.serialno, { d, delay: room.delay || 0, ...r });
-      else {
-        cal.results.delete(d.serialno);
-        row.textContent = 'No se oye bien: acércate o súbele el volumen, y «Medir» otra vez';
+      if (r) {
+        step.set(d.serialno, { d, delay: room.delay || 0, ...r });
+        cal.failed.delete(d.serialno);
+      } else {
+        cal.failed.add(d.serialno);
+        row.textContent = 'No se oye bien: acércate o súbele el volumen, y mídelo otra vez';
         row.className = 'cal-state bad';
       }
     }
@@ -1502,7 +1526,10 @@ async function measure(cal, targets) {
     if (now.song === CAL && now.playing && !cal.cancelled) await post('/music/toggle');
   } finally {
     cal.busy = false;
+    if (step.size) cal.steps.push(step);
     if (!cal.cancelled) {
+      // Para el siguiente paso, marcados solo los que no se han oído
+      for (const b of $('#dialog').querySelectorAll('[data-pick]')) b.checked = cal.failed.has(b.dataset.pick);
       calButtons(cal);
       showProposal(cal);
     }
@@ -1510,8 +1537,13 @@ async function measure(cal, targets) {
 }
 
 function calButtons(cal) {
-  for (const btn of $('#dialog').querySelectorAll('[data-measure], #cal-all')) btn.disabled = cal.busy;
-  $('#cal-apply').disabled = cal.busy || cal.results.size < 2;
+  const dlg = $('#dialog'), go = $('#cal-measure'), n = dlg.querySelectorAll('[data-pick]:checked').length;
+  for (const el of dlg.querySelectorAll('[data-pick], [data-room]')) el.disabled = cal.busy;
+  go.disabled = cal.busy || !n;
+  go.textContent = n ? `Medir (${n})` : 'Medir';
+  $('#cal-undo').hidden = !cal.steps.length;
+  $('#cal-undo').disabled = cal.busy;
+  $('#cal-apply').disabled = cal.busy || placed(cal).length < 2;
 }
 
 // Al cerrar: suelta el micrófono y, cuando acabe lo que estuviera midiendo, deja la música como estaba
@@ -1539,24 +1571,50 @@ async function restoreMusic(before) {
   await refreshMusic();
 }
 
+// Todos los pasos en una sola medida. Cada paso se oye desde otro sitio, así que sus tiempos se desplazan lo que diga el móvil que
+// comparte con los anteriores (la mediana, si son varios); de cada móvil vale su primera medida. Sin ninguno compartido se
+// comparan tal cual, como si se hubiera medido a la misma distancia
+function placed(cal) {
+  const all = new Map();
+  cal.steps.forEach((step, i) => {
+    const shared = [...step.values()].filter(r => all.has(r.d.serialno));
+    const shift = shared.length ? middle(shared.map(r => r.err - all.get(r.d.serialno).err)) : 0;
+    for (const r of step.values()) {
+      const seen = all.get(r.d.serialno);
+      if (seen) seen.steps.push(i + 1);
+      else all.set(r.d.serialno, { ...r, err: r.err - shift, steps: [i + 1] });
+    }
+  });
+  return [...all.values()];
+}
+
 // Lo que se oye de cada uno respecto a la mediana, y el retraso que lo cuadra: el que se oye tarde se adelanta y al revés
 function proposal(cal) {
-  const results = [...cal.results.values()];
+  const results = placed(cal);
   const target = middle(results.map(r => r.delay + r.err));
   return results.map(r => ({ ...r, late: r.delay + r.err - target, next: Math.max(-1000, Math.min(1000, Math.round(target - r.err))) }));
 }
 
 function showProposal(cal) {
-  const results = proposal(cal);
-  for (const r of results) {
-    cal.row(r.d).className = 'cal-state';
-    cal.row(r.d).innerHTML = results.length < 2 ? 'Medido; falta otro para compararlo'
-      : `Se oye ${Math.abs(r.late) < 2 ? 'a la par' : `${ms(r.late)} ${r.late > 0 ? '(tarde)' : '(pronto)'}`}`
-        + ` · retraso ${num(r.delay)} → <strong>${num(r.next)}</strong> ms`;
+  const results = proposal(cal), done = new Map(results.map(r => [r.d.serialno, r])), n = cal.steps.length;
+  for (const tr of $('#dialog').querySelectorAll('.cal tr[data-id]')) {
+    const id = tr.dataset.id, row = cal.row(id), r = done.get(id);
+    if (r) {
+      row.className = 'cal-state';
+      row.innerHTML = (n > 1 ? `${r.steps.length > 1 ? 'Pasos' : 'Paso'} ${r.steps.join(' y ')} · ` : '') + (results.length < 2 ? 'Medido; falta otro para compararlo'
+        : `Se oye ${Math.abs(r.late) < 2 ? 'a la par' : `${ms(r.late)} ${r.late > 0 ? '(tarde)' : '(pronto)'}`}`
+          + ` · retraso ${num(r.delay)} → <strong>${num(r.next)}</strong> ms`);
+    } else if (!cal.failed.has(id)) {
+      row.className = 'cal-state muted';
+      row.textContent = 'Sin medir';
+    }
   }
-  $('#cal-note').textContent = results.length >= 2 ? 'Medido desde el micrófono. «Aplicar» pone esos retrasos; puedes volver a medir cualquiera antes.'
-    : results.length ? 'Ahora otro: ponte junto al siguiente altavoz y pulsa su «Medir».'
-    : 'Pulsa «Medir» junto a un altavoz, o «Medir todos» desde donde escuchas.';
+  const links = results.filter(r => r.steps.length > 1 && r.steps.at(-1) === n).map(r => title(r.d));
+  const link = n < 2 ? '' : links.length ? `El paso ${n} queda unido a los anteriores por ${links.join(' y ')}. `
+    : `El paso ${n} no comparte ningún móvil con los anteriores: se compara como si hubieras medido a la misma distancia. `;
+  $('#cal-note').textContent = !n ? 'Marca los que se oyen desde donde estás y pulsa «Medir».'
+    : results.length < 2 ? 'Falta otro para compararlo: márcalo y pulsa «Medir».'
+    : `${link}Para seguir, cambia de sitio y marca uno ya medido junto con los nuevos. «Aplicar» pone esos retrasos.`;
 }
 
 // El volumen de cada móvil (lo que diga el propio móvil, también si lo cambian con sus botones)
@@ -1694,7 +1752,7 @@ setInterval(async () => {
 async function viewSettings(current) {
   view.innerHTML = `<div class="page-head"><h1>Ajustes</h1>
       <p class="muted">Un perfil común para todos los móviles: elige cómo quieres cada ajuste y aplícalo de una vez. Si algún móvil
-        lo necesita distinto (uno que solo es altavoz, otro que solo hace de mando), pulsa su casilla.</p></div>
+        lo necesita distinto (uno que solo es altavoz, otro que solo hace de mando), pulsa ese valor en su ficha.</p></div>
     <section id="settings">${loading('Leyendo los ajustes de cada móvil…')}</section>`;
   state.reload = async () => {
     const data = await api('/settings');
@@ -1721,48 +1779,59 @@ const changes = d => state.settings.settings.filter(s => usable(d, s) && setting
 function renderSettings() {
   const { settings, profile, devices } = state.settings;
   const pending = devices.reduce((n, d) => n + changes(d).length, 0);
-  const label = !Object.keys(profile).length ? 'Elige abajo algún ajuste'
+  const label = !Object.keys(profile).length ? 'Elige algún ajuste'
     : pending ? `Aplicar a todos (${pending} ${pending === 1 ? 'cambio' : 'cambios'})` : 'Todos como el perfil ✓';
-  const rows = settings.map(s => `<tr data-key="${esc(s.key)}">
-      <td class="app-cell"><div class="app-name">${esc(s.name)}${s.android ? tag(`Android ${s.android} o superior`) : ''}</div>
-        ${s.hint ? `<div class="muted small">${esc(s.hint)}</div>` : ''}</td>
-      <td class="want" data-label="Perfil común"><select class="want" aria-label="${esc(s.name)} en el perfil común">
+  const picks = settings.map(s => {
+    const help = [s.android && `Necesita Android ${s.android} o superior.`, s.hint].filter(Boolean).join(' ');
+    return `<label class="pick" data-key="${esc(s.key)}"><span class="pick-name">${esc(s.name)}${help ? info(help) : ''}</span>
+      <select class="want" aria-label="${esc(s.name)} para todos">
         <option value="">No tocar</option>
         ${s.options.map(([v, text]) => `<option value="${esc(v)}" ${profile[s.key] === v ? 'selected' : ''}>${esc(text)}</option>`).join('')}
-      </select></td>
-      ${devices.map(d => settingCell(d, s)).join('')}
-    </tr>`).join('');
+      </select></label>`;
+  }).join('');
   $('#settings').innerHTML = `
-    <div class="card bar">
-      <button class="btn ${pending ? 'primary' : ''}" data-act="apply-all" ${pending ? '' : 'disabled'}>${label}</button>
-      <span class="muted small">Lo que dejes en «No tocar» se queda como esté en cada móvil.</span>
-    </div>
+    <section class="card profile">
+      <div class="profile-head">
+        <h2>Para todos</h2>
+        <span class="muted small">Lo que dejes en «No tocar» se queda como esté en cada móvil.</span>
+        <button class="btn ${pending ? 'primary' : ''}" data-act="apply-all" ${pending ? '' : 'disabled'}>${label}</button>
+      </div>
+      <div class="picks">${picks}</div>
+    </section>
     ${devices.length ? '' : '<p class="problem">No hay móviles listos: conéctalos en <a href="#/">Dispositivos</a>.</p>'}
-    ${devices.filter(d => d.error).map(d => `<p class="problem">${esc(title(d))}: ${esc(d.error)}</p>`).join('')}
-    <div class="card flush scroll-x"><table class="matrix settings">
-      <thead><tr><th>Ajuste</th><th>Perfil común</th>${devices.map(d => `<th class="dev-col">${esc(title(d))}</th>`).join('')}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
+    <div class="grid set-devices">${devices.map(settingsDevice).join('')}</div>
     <p class="legend muted small">
       <span><span class="val ok">Así</span> como debe estar</span>
       <span><span class="val diff">Así</span> distinto: falta cambiarlo</span>
       <span><span class="val">Así</span> no se toca</span>
       <span><span class="val ok own">Así</span> ese móvil lo tiene distinto del perfil</span>
       <span><span class="none">—</span> su Android no lo tiene</span>
-      <span>· Pulsa una casilla para cambiar ese móvil.</span></p>`;
+      <span>· Pulsa un valor para cambiarlo en ese móvil.</span></p>`;
 }
 
 const optionText = (s, v) => s.options.find(([o]) => o === v)?.[1] ?? v;
 
-function settingCell(d, s) {
-  if (!d.settings) return `<td class="cell" data-label="${esc(title(d))}"><span class="none" title="${esc(d.error || 'No se pudo leer')}">?</span></td>`;
-  const v = d.settings[s.key];
-  if (v.na) return `<td class="cell" data-label="${esc(title(d))}"><span class="none" title="${esc(`${title(d)}: ${v.na}`)}">—</span></td>`;
+// Cada móvil, una ficha con la lista de sus ajustes: así caben en el móvil y da igual cuántos haya
+function settingsDevice(d) {
+  const todo = d.settings ? changes(d).length : 0;
+  return `<article class="card set-device" data-serial="${esc(d.serial)}">
+    <div class="set-head">
+      <div><h3>${esc(title(d))}</h3><p class="muted small">${esc([d.name && model(d), d.android && `Android ${d.android}`].filter(Boolean).join(' · '))}</p></div>
+      ${todo ? `<span class="val diff">${todo} por cambiar</span>` : ''}
+    </div>
+    ${d.settings ? `<ul class="props">${state.settings.settings.map(s => settingProp(d, s)).join('')}</ul>`
+      : `<p class="problem">${esc(d.error || 'No se han podido leer sus ajustes')}</p>`}
+  </article>`;
+}
+
+function settingProp(d, s) {
+  const v = d.settings[s.key], name = `<span class="prop-name">${esc(s.name)}</span>`;
+  if (v.na) return `<li data-key="${esc(s.key)}">${name}<span class="none" title="${esc(`${title(d)}: ${v.na}`)}">—</span></li>`;
   const st = settingState(d, s), now = v.text ?? '?', mine = own(d, s), want = wantFor(d, s);
-  const tip = [`${title(d)}: ${now}`, st === 'diff' && `tiene que estar en ${optionText(s, want)}`,
+  const tip = [`${s.name} en ${title(d)}: ${now}`, st === 'diff' && `tiene que estar en ${optionText(s, want)}`,
     mine !== undefined && (mine === '' ? 'en este móvil no se toca' : 'propio de este móvil'), 'Pulsa para elegir'].filter(Boolean).join('. ');
-  return `<td class="cell" data-serial="${esc(d.serial)}" data-label="${esc(title(d))}"><button class="val ${st} ${mine !== undefined ? 'own' : ''}" data-act="setting-cell"
-    title="${esc(tip)}" aria-label="${esc(tip)}">${esc(now)}</button></td>`;
+  return `<li data-key="${esc(s.key)}">${name}<button class="val ${st} ${mine !== undefined ? 'own' : ''}" data-act="setting-cell"
+    title="${esc(tip)}" aria-label="${esc(tip)}">${esc(now)}</button></li>`;
 }
 
 // Un ajuste en un móvil: elegir su valor (si no es el del perfil, queda como propio de ese móvil), volver a como el
@@ -1797,7 +1866,7 @@ async function setWant(select) {
     else delete profile[key];
   } catch (e) { toast(e.message, 'error'); }
   renderSettings();
-  $(`#settings tr[data-key="${key}"] select`)?.focus();
+  $(`#settings .pick[data-key="${key}"] select`)?.focus();
 }
 
 async function applySettings(body) {

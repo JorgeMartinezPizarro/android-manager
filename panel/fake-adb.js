@@ -156,15 +156,15 @@ function shell(p, c) {
     return a && !a.removed ? out(`    versionCode=${a.versionCode || 1} minSdk=21 targetSdk=33\n    versionName=${m[1] === 'com.android.chrome' ? '120.0.6099.230' : '1.0'}`) : undefined;
   }
   if ((m = c.match(/^am start .*details\?id=([\w.]+)/))) return out(`Starting: Intent { act=android.intent.action.VIEW dat=market://details?id=${m[1]} }`);
-  // El reloj solo deja poner temporizadores en los Android 12 o más nuevos (como el OPPO de verdad)
+  // El reloj solo deja poner temporizadores en los Android 12 o más nuevos
   if (c.includes('SET_TIMER') && sdk < 31) return out('Security exception: Permission Denial: starting Intent { act=android.intent.action.SET_TIMER } requires com.android.alarm.permission.SET_ALARM');
   if (c.startsWith('am start ')) return out(`Starting: Intent { ${c.slice(9, 80)} }`);
   if (c === 'settings get system alarm_alert') return out('content://media/internal/audio/media/11');
-  // Solo el Samsung tiene reproductor de música (como el Huawei de verdad); el Motorola, como el Nexus, no
+  // Solo el Samsung tiene reproductor de música; el Motorola, no
   if (c.startsWith('cmd package query-activities') && c.includes('audio/*')) {
     return out(p.maker === 'samsung' ? '1 activities found:\n  Activity #0:\n    com.sec.android.app.music/.MusicPlayerActivity' : 'No activities found');
   }
-  // Enlaces: los de YouTube los abre YouTube en el Samsung, el Xiaomi usa Chrome y el Motorola pregunta (como el OPPO)
+  // Enlaces: los de YouTube los abre YouTube en el Samsung, el Xiaomi usa Chrome y el Motorola pregunta
   const YOUTUBE = 'com.google.android.youtube/.UrlActivity', CHROME = 'com.android.chrome/com.google.android.apps.chrome.IntentDispatcher';
   if ((m = c.match(/^cmd package (resolve-activity|query-activities) --brief -a android\.intent\.action\.VIEW -d '(.+)'$/))) {
     const video = m[2].includes('youtube.com');
@@ -180,7 +180,7 @@ function shell(p, c) {
   }
   if (c === 'sleep 1' || c === 'wm dismiss-keyguard') return;
   if (c === 'wm size') return out('Physical size: 1080x2340');
-  if (c.startsWith('dumpsys window policy')) return out(`showing=${p.screen === 'off'} mIsShowing=${p.screen === 'off'}`);
+  if (c.startsWith('dumpsys window policy')) return out(`showing=${p.screen === 'off'} mIsShowing=${p.screen === 'off'} mShowingLockscreen=${p.screen === 'off'}`);
   if (/^input (tap \d+ \d+|swipe \d+ \d+ \d+ \d+)$/.test(c)) return;
   if ((m = c.match(/^(?:media|cmd media_session) volume --stream 3 (.+)$/))) return volumeCmd(p, m[1]);
   // Android 8 o anterior: setStreamVolume del servicio de audio
@@ -199,7 +199,7 @@ function shell(p, c) {
   if ((m = c.match(/^settings list (system|global)$/))) {
     return Object.entries(settingsOf(p)[m[1]]).sort().forEach(([k, v]) => out(`${k}=${v}`));
   }
-  // Brillo mínimo: en manual no baja de lowest (17 en el Nexus 6); en automático, hasta 1
+  // Brillo mínimo: en manual no baja de lowest (17, como en algunos móviles); en automático, hasta 1
   if ((m = c.match(/^dumpsys (power|display) \| grep -m1 (\w+)$/))) {
     const line = { power: `mScreenBrightnessSettingMinimum=${p.lowest ?? 1}`, display: 'mScreenBrightnessRangeMinimum=1' }[m[1]];
     return line.includes(m[2]) ? out(`  ${line}`) : undefined;
@@ -251,7 +251,7 @@ function main(args) {
       phoneOf(serial);
       return out(`restarting in TCP mode port: ${rest[0]}`);
     // Los altavoces de la demo son pestañas del navegador: http://localhost:8768/?id=<número de serie>.
-    // El Motorola no deja, como el Nexus 6 de verdad (Android 7): el suyo va por la IP del PC en la wifi
+    // El Motorola no deja, como los Android 7: el suyo va por la IP del PC en la wifi
     case 'reverse':
       if (phoneOf(serial).maker === 'motorola') fail('adb.exe: error: more than one device/emulator');
       return;

@@ -281,10 +281,20 @@ dialog menu a.btn { text-decoration: none; }
 .delay-val { width: 4.2em; margin: 0 4px; padding: 3px 4px; border: 1px solid var(--border-strong); border-radius: 6px;
   background: var(--surface); color: var(--text); font: inherit; font-size: 13px; text-align: center; -moz-appearance: textfield; }
 .delay-val::-webkit-inner-spin-button, .delay-val::-webkit-outer-spin-button { margin: 0; -webkit-appearance: none; }
-.sp-clock { margin-left: 8px; white-space: nowrap; }
+/* Estado, siempre del mismo ancho: cabe lo más largo («Esperando un toque» o «Sonando −999 ms», y el wifi), para que la tabla
+   no se descuadre a cada cambio. El wifi, al final de la línea, tampoco se mueve; un error se parte en líneas sin ensancharla */
+.sp-line { display: flex; align-items: center; min-width: 180px; }
+.sp-clock { margin-left: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sp-wifi { display: inline-flex; margin-left: auto; padding-left: 8px; color: var(--muted); cursor: help; }
+.sp-wifi svg { width: 15px; height: 15px; }
+/* Lo mismo con los botones: sitio para «Abrir», más ancho que el icono de «Reabrir» */
+.speakers .row-actions::after { content: ""; display: block; width: 136px; }
+/* En una ventana estrecha (media pantalla), antes de que la tabla corra de lado encoge el deslizador */
+.speakers .vol { width: clamp(70px, calc(100vw - 878px), 130px); }
+@media (min-width: 641px) and (max-width: 1048px) { .speakers th, .speakers td { padding-left: 8px; padding-right: 8px; } }
 .info { display: inline-flex; margin-left: 5px; vertical-align: -3px; color: var(--muted); cursor: help; }
 .info:hover, .info:focus-visible { color: var(--text); }
-.sp-state .err-text { max-width: 300px; margin-top: 4px; }
+.sp-state .err-text { width: 0; min-width: 100%; margin-top: 4px; }
 .val.bad { background: var(--danger-weak); color: var(--danger); }
 /* Las canciones, a pantalla completa: arriba el buscador y lo de subir; debajo la lista, que es lo único que se desplaza */
 dialog.full { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; border-radius: 0; }
@@ -324,8 +334,6 @@ tr.dim .app-cell { opacity: .6; }
 .summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .scroll-x { overflow-x: auto; }
 .matrix th { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
-.matrix .dev-col, .matrix .cell { width: 1%; text-align: center; }
-.matrix .dev-col { min-width: 84px; max-width: 130px; }
 .matrix .app-cell { min-width: 180px; }
 .cell-btn { width: 28px; height: 28px; border: 0; border-radius: 50%; background: var(--accent-weak); color: var(--accent-text); font: 700 14px system-ui; cursor: pointer; }
 .cell-btn::after { content: "✓"; }
@@ -372,16 +380,29 @@ button.st:hover { transform: scale(1.1); box-shadow: inset 0 0 0 1.5px currentCo
 .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 10px 2px 0; }
 .legend > span { display: inline-flex; align-items: center; gap: 5px; }
 .legend .st { width: 20px; height: 20px; font-size: 11px; }
-.catalog .row-actions, .cleanup .row-actions { width: 1%; }
+/* Favoritas y Limpiar: una lista, para que quepan los móviles que sean. Cada app y, debajo, su estado en cada móvil, a columnas */
+.catalog, .cleanup, .catalog tbody, .cleanup tbody { display: block; }
+.catalog tr, .cleanup tr { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.catalog tbody tr:last-child, .cleanup tbody tr:last-child { border-bottom: 0; }
+.catalog tr::after, .cleanup tr::after { content: ""; order: 1; flex: 0 0 100%; margin-top: -8px; } /* los móviles, siempre en otra línea */
+.catalog td, .cleanup td { padding: 0; border: 0; }
+.catalog .app-cell, .cleanup .app-cell { flex: 1 1 60%; min-width: 0; }
+.cleanup .star-cell { flex: none; width: auto; }
+.catalog .row-actions, .cleanup .row-actions { order: 1; flex: none; width: auto; }
 .catalog .row-actions .btn + .btn, .cleanup .row-actions .btn + .btn { margin-left: 2px; }
-/* Pestañas de Apps y, en la cabecera de cada móvil, su botón (poner las que faltan, limpiar) */
+.catalog .cell, .cleanup .cell { order: 2; display: flex; align-items: center; gap: 8px; flex: 0 0 190px; min-width: 0; }
+.catalog .cell::after, .cleanup .cell::after { content: attr(data-label); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--muted); }
+.catalog .cell .st, .cleanup .cell .st { flex: none; width: 26px; height: 26px; font-size: 13px; }
+.catalog .cell .none, .cleanup .cell .none { flex: none; width: 26px; text-align: center; }
+.cleanup tr.group { display: block; padding: 0; }
+.cleanup tr.group th { display: block; }
+/* Pestañas de Apps */
 .apps-tabs { margin: 0 0 16px; }
-.dev-act { display: block; margin: 6px auto 0; }
 /* Limpiar: grupos (tuyas, del sistema), la explicación de cada sugerida y el buscador */
 .matrix tr.group th { padding: 14px 12px 6px; background: var(--bg); color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 .app-meta .why { margin-right: 8px; color: var(--muted); font-size: 13px; }
-/* Para que la tabla quepa: los botones de cada fila, uno encima de otro, y el paquete partido si es largo */
-.cleanup .row-actions .stack { display: flex; flex-direction: column; gap: 4px; }
+/* Los botones de cada fila, uno al lado de otro, y el paquete partido si es largo */
+.cleanup .row-actions .stack { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 .cleanup .row-actions .stack .btn { margin: 0; }
 .cleanup .app-meta code { overflow-wrap: anywhere; }
 .clean-search { margin-top: 16px; }
@@ -408,10 +429,25 @@ details.card { margin-top: 16px; }
 .drop.compact { padding: 22px 16px; }
 
 /* Ajustes comunes */
-.settings .app-cell { min-width: 220px; }
-.settings .app-cell .muted { max-width: 340px; margin-top: 2px; }
-.settings td.want { width: 1%; white-space: nowrap; }
-.settings select { width: 13.5em; }
+/* Ajustes: arriba el formulario para todos, compacto; debajo, una ficha por móvil con la lista de sus ajustes */
+.profile { margin-bottom: 16px; }
+.profile-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-bottom: 12px; }
+.profile-head h2 { margin: 0; font-size: 16px; }
+.profile-head .btn { margin-left: auto; }
+.picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px 14px; }
+.pick { display: flex; flex-direction: column; justify-content: flex-end; gap: 3px; min-width: 0; }
+.pick-name { font-size: 13px; color: var(--muted); }
+.pick select { width: 100%; min-width: 0; padding-top: 5px; padding-bottom: 5px; }
+.set-devices { gap: 12px; margin-bottom: 0; }
+.set-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.set-head h3 { margin: 0; font-size: 15px; }
+.set-head p { margin: 1px 0 0; }
+.set-head .val { flex: none; }
+.props { margin: 8px 0 0; padding: 0; list-style: none; }
+.props li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; font-size: 14px; }
+.props li + li { border-top: 1px solid var(--border); }
+.prop-name { min-width: 0; color: var(--muted); }
+.props .val, .props .none { flex: none; }
 .val { display: inline-block; padding: 3px 10px; white-space: nowrap; border: 0; border-radius: 999px; font: 500 13px/1.35 system-ui, sans-serif; background: var(--chip); color: var(--muted); }
 .val.ok { background: var(--ok-weak); color: var(--ok-text); }
 .val.diff { background: var(--warn-weak); color: var(--warn); }
@@ -803,7 +839,9 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
 .cal td { padding: 7px 10px; border-top: 1px solid var(--border); }
 .cal td:first-child { font-weight: 600; white-space: nowrap; }
 .cal-state.bad { color: var(--danger); }
-.cal td.cal-go { width: 1%; padding-right: 0; text-align: right; }
+.cal-pick { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.cal-pick input { flex: none; width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
+.cal-rooms { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0; }
 
 /* ── En el móvil ── Las pestañas van abajo, como en una app, y las tablas pasan a tarjetas: cada fila es una tarjeta y cada
    columna de un móvil, una etiqueta con su nombre (data-label). Así no se corta nada ni hay que deslizar de lado */
@@ -845,14 +883,15 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
   .cleanup .row-actions { order: 3; flex: 1 1 100%; }
   .cleanup .row-actions .stack { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; }
   /* Ajustes: el perfil común debajo del nombre, a todo lo ancho */
-  .settings .app-cell { flex-basis: 100%; }
-  .settings td.want { order: 1; flex: 1 1 100%; display: flex; align-items: center; gap: 10px; width: auto; }
-  .settings td.want::before { content: attr(data-label); flex: none; font-size: 13px; color: var(--muted); }
-  .settings select { flex: 1; width: auto; min-width: 0; }
+  .picks { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+  .profile-head .btn { width: 100%; margin-left: 0; }
   /* Altavoces: nombre y estado arriba, el volumen a todo lo ancho y debajo el retraso y los botones */
   .speakers .app-cell { flex-basis: 45%; }
   .speakers .sp-state { flex: none; max-width: 55%; text-align: right; }
-  .speakers .sp-vol { order: 1; flex: 1 1 100%; display: flex; align-items: center; gap: 8px; }
+  .speakers .sp-line { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+  .speakers .sp-wifi { margin-left: 0; }
+  .speakers .sp-state .err-text { width: auto; min-width: 0; }
+  .speakers .sp-vol { order: 1; flex: 1 1 100%; min-width: 0; display: flex; align-items: center; gap: 8px; }
   .speakers .sp-vol .vol { flex: 1; width: auto; min-width: 0; }
   .speakers .sp-vol .vol-val { min-width: 3em; margin: 0; text-align: right; }
   .speakers .nowrap .btn + .btn { margin-left: 0; }
@@ -860,9 +899,9 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
   .speakers .delay-val { height: 32px; padding: 0 4px; }
   .speakers .sp-delay::before { content: "Retraso"; margin-right: 8px; font-size: 13px; color: var(--muted); }
   .speakers .row-actions { order: 3; }
+  .speakers .row-actions::after { content: none; }
   /* Calibrar: el nombre arriba y, debajo, cómo va la medida y su «Medir» */
-  .cal tr { display: grid; grid-template-columns: 1fr auto; border-top: 1px solid var(--border); padding: 8px 0; }
+  .cal tr { display: grid; grid-template-columns: 1fr; border-top: 1px solid var(--border); padding: 8px 0; }
   .cal td { border: 0; padding: 2px 0; }
-  .cal td:first-child { grid-column: 1 / -1; white-space: normal; }
-  .cal td.cal-go { grid-row: 2; grid-column: 2; align-self: center; padding-left: 10px; }
+  .cal td:first-child { white-space: normal; }
 }

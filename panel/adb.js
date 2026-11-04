@@ -104,6 +104,8 @@ async function info(serial) {
 
 // Solo los números de serie de lo que adb tiene conectado, sin preguntar nada a los móviles
 const serials = async () => (await run(['devices'])).split('\n').slice(1).map(line => line.split(/\s+/)[0]).filter(Boolean);
+// El número de serie del propio móvil: el mismo por cable que por wifi
+const serialno = async serial => (await shell(serial, 'getprop ro.serialno')).trim();
 
 async function devices() {
   const rows = (await run(['devices'])).split('\n').slice(1)
@@ -205,13 +207,17 @@ async function pullApk(serial, pkg, dest) {
   await run(['-s', serial, 'pull', paths[0], dest], { timeout: 5 * 60000 });
 }
 
-// Ajustes en una sola llamada: versión de Android, modo oscuro y las tablas de ajustes system y global
-const SETTINGS = 'getprop ro.build.version.sdk; echo @@; cmd uimode night 2>/dev/null; echo @@; settings list system; echo @@; settings list global';
-const table = text => Object.fromEntries(text.split('\n').map(l => l.match(/^([\w.]+)=(.*)$/)).filter(Boolean).map(([, k, v]) => [k, v.trim()]));
+// Ajustes en una sola llamada: modo oscuro y las tablas de ajustes system y global. Antes de Android 6, settings solo sabe get y
+// put: las tablas se leen directamente de donde las guarda Android (las filas salen como name=…, value=…)
+const SETTINGS = 'cmd uimode night 2>/dev/null; echo @@; settings list system; echo @@; settings list global';
+const OLD_SETTINGS = 'echo @@; content query --uri content://settings/system; echo @@; content query --uri content://settings/global';
+const table = text => Object.fromEntries(text.split('\n').map(l => l.match(/^([\w.]+)=(.*)$/) || l.match(/\bname=([\w.]+), value=(.*)$/))
+  .filter(Boolean).map(([, k, v]) => [k, v.trim()]));
 
 async function readSettings(serial) {
-  const [sdk, night = '', system = '', global = ''] = (await shell(serial, SETTINGS)).split('@@\n');
-  return { sdk: Number(sdk) || 0, night: night.match(/Night mode: (\w+)/)?.[1], system: table(system), global: table(global) };
+  const sdk = await sdkOf(serial);
+  const [night = '', system = '', global = ''] = (await shell(serial, sdk < 23 ? OLD_SETTINGS : SETTINGS)).split('@@\n');
+  return { sdk, night: night.match(/Night mode: (\w+)/)?.[1], system: table(system), global: table(global) };
 }
 
 // Solo estas órdenes, con valores sencillos: los ajustes no pueden colar nada más en el móvil
@@ -242,9 +248,9 @@ async function brightness(serial) {
   return { mode: /^[01]$/.test(mode) ? mode : '1', level: /^\d+$/.test(level) ? level : '128', ...(/^-?[\d.]+$/.test(adj) && { adj }) };
 }
 
-// Lo más oscuro que deja cada móvil: casi siempre el nivel 1 en manual. Algunos (el Nexus 6) no bajan en manual de un mínimo,
+// Lo más oscuro que deja cada móvil: casi siempre el nivel 1 en manual. Algunos no bajan en manual de un mínimo,
 // 17 de 255, pero en automático sí llegan al de la pantalla: con el ajuste a -1 y la habitación a oscuras, se quedan en 1.
-// Solo si ya estaba en automático: al pasar de manual a automático el Nexus enciende un segundo su último brillo automático
+// Solo si ya estaba en automático: al pasar de manual a automático algunos encienden un segundo su último brillo automático
 async function darkest(serial, now) {
   const out = await shell(serial, 'dumpsys power | grep -m1 mScreenBrightnessSettingMinimum; dumpsys display | grep -m1 mScreenBrightnessRangeMinimum');
   const manual = Number(out.match(/SettingMinimum=(\d+)/)?.[1]), screen = Number(out.match(/RangeMinimum=(\d+)/)?.[1]);
@@ -260,6 +266,27 @@ const sdkOf = async serial => Number(await shell(serial, 'getprop ro.build.versi
 
 // Si la pantalla está encendida (también si es la de bloqueo)
 const awake = async serial => /mWakefulness=Awake/.test(await shell(serial, 'dumpsys power | grep -m1 mWakefulness='));
+
+// KEYCODE_WAKEUP y KEYCODE_SLEEP no existen hasta Android 4.4W: antes, input no dice nada y no hace nada. Allí se pulsa el botón
+// de encendido, que alterna, y solo si la pantalla no está ya como se quiere
+const oldKeys = async serial => await sdkOf(serial) < 20;
+async function powerTo(serial, on) {
+  if (await awake(serial) !== on) check(await shell(serial, 'input keyevent KEYCODE_POWER 2>&1'));
+}
+const wake = async serial => (await oldKeys(serial) ? powerTo(serial, true) : check(await shell(serial, 'input keyevent KEYCODE_WAKEUP 2>&1')));
+const sleepScreen = async serial => (await oldKeys(serial) ? powerTo(serial, false) : check(await shell(serial, 'input keyevent KEYCODE_SLEEP 2>&1')));
+// En esos Android tampoco hay wm dismiss-keyguard: lo más que se puede es la tecla de menú, que quita el bloqueo de deslizar en
+// algunos (no en los Samsung), y solo si se ve; si no, abriría el menú de la app que esté delante. Un gesto no se intenta, porque
+// con un patrón contaría como un intento fallido. Devuelve si ya no se ve el bloqueo
+async function unlockOld(serial) {
+  const showing = async () => /mShowingLockscreen=true/.test(await shell(serial, 'dumpsys window policy | grep mShowingLockscreen'));
+  await powerTo(serial, true);
+  await sleep(1000);
+  if (!await showing()) return true;
+  check(await shell(serial, 'input keyevent KEYCODE_MENU 2>&1'));
+  await sleep(500);
+  return !await showing();
+}
 // Entre comillas simples el shell del móvil no interpreta nada; solo hay que escapar la propia comilla
 const quote = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
@@ -332,7 +359,8 @@ const PLAYER = /music|media|player|audio/i;
 const COMPONENT = /^[\w.]+\/[\w.$]+$/;
 
 async function ring(serial) {
-  const timer = await shell(serial, 'input keyevent KEYCODE_WAKEUP; am start -a android.intent.action.SET_TIMER '
+  await wake(serial).catch(() => {});
+  const timer = await shell(serial, 'am start -a android.intent.action.SET_TIMER '
     + '--ei android.intent.extra.alarm.LENGTH 1 --ez android.intent.extra.alarm.SKIP_UI true 2>&1').catch(e => e.message);
   if (!/Error|Exception|Denial/i.test(timer)) return 'Suena como un temporizador hasta que lo pares en el móvil';
   const uri = lastLine(await shell(serial, 'settings get system alarm_alert'));
@@ -370,7 +398,8 @@ async function linkApp(serial, href) {
 async function openUrl(serial, url) {
   const href = webLink(url);
   const app = await linkApp(serial, href);
-  check(await shell(serial, `input keyevent KEYCODE_WAKEUP; am start -a android.intent.action.VIEW -d ${quote(href)}${app ? ` -n ${quote(app)}` : ''}`));
+  await wake(serial).catch(() => {});
+  check(await shell(serial, `am start -a android.intent.action.VIEW -d ${quote(href)}${app ? ` -n ${quote(app)}` : ''}`));
   return app ? `Abierto con ${appName(app)}` : 'Abierto';
 }
 
@@ -393,12 +422,10 @@ async function notify(serial, text) {
 }
 
 const KEYS = {
-  wake: ['KEYCODE_WAKEUP', 'Pantalla encendida'],
-  lock: ['KEYCODE_SLEEP', 'Pantalla apagada'],
   playPause: ['KEYCODE_MEDIA_PLAY_PAUSE', 'Play / pausa'],
   previous: ['KEYCODE_MEDIA_PREVIOUS', 'Canción anterior'],
   next: ['KEYCODE_MEDIA_NEXT', 'Canción siguiente'],
-  // Los botones del visor de pantalla; KEYCODE_WAKEUP no existe hasta Android 4.4W, el de encendido sí
+  // Los botones del visor de pantalla
   back: ['KEYCODE_BACK', 'Atrás'],
   home: ['KEYCODE_HOME', 'Inicio'],
   power: ['KEYCODE_POWER', 'Botón de encendido'],
@@ -407,15 +434,20 @@ const KEYS = {
 const QUICK = {
   ...Object.fromEntries(Object.entries(KEYS).map(([action, [key, message]]) =>
     [action, async s => (check(await shell(s, `input keyevent ${key} 2>&1`)), message)])),
+  wake: async s => (await wake(s), 'Pantalla encendida'),
+  lock: async s => (await sleepScreen(s), 'Pantalla apagada'),
   // Quita el bloqueo de deslizar; con PIN o patrón, adb no puede saltárselo y el móvil se queda pidiéndolo
-  unlock: async s => (check(await shell(s, 'input keyevent KEYCODE_WAKEUP 2>&1; sleep 1; wm dismiss-keyguard 2>&1')),
-    'Desbloqueado; si tiene PIN, se queda pidiéndolo'),
+  unlock: async s => {
+    if (await oldKeys(s)) return await unlockOld(s) ? 'Desbloqueado' : 'Pantalla encendida; su bloqueo hay que quitarlo en el propio móvil';
+    check(await shell(s, 'input keyevent KEYCODE_WAKEUP 2>&1; sleep 1; wm dismiss-keyguard 2>&1'));
+    return 'Desbloqueado; si tiene PIN, se queda pidiéndolo';
+  },
   // El giro fijo es user_rotation (0 vertical, 1 horizontal), que solo cuenta con el giro automático apagado
   landscape: async s => (await writeSettings(s, ['settings put system accelerometer_rotation 0', 'settings put system user_rotation 1']), 'En horizontal'),
   portrait: async s => (await writeSettings(s, ['settings put system accelerometer_rotation 0', 'settings put system user_rotation 0']), 'En vertical'),
   autoRotate: async s => (await writeSettings(s, ['settings put system accelerometer_rotation 1']), 'Gira sola'),
-  // El calendario que tenga cada móvil (el de Google, el de Huawei…); se abre en la última vista que se usó
-  calendar: async s => (check(await shell(s, 'input keyevent KEYCODE_WAKEUP 2>&1; am start -a android.intent.action.MAIN -c android.intent.category.APP_CALENDAR 2>&1')),
+  // El calendario que tenga cada móvil (el de Google, el del fabricante…); se abre en la última vista que se usó
+  calendar: async s => (await wake(s), check(await shell(s, 'am start -a android.intent.action.MAIN -c android.intent.category.APP_CALENDAR 2>&1')),
     'Calendario abierto'),
   volumeUp: s => volume(s, 'raise'),
   volumeDown: s => volume(s, 'lower'),
@@ -455,6 +487,7 @@ async function openSpeaker(serial, url) {
   const chrome = Number((await shell(serial, 'dumpsys package com.android.chrome')).match(/versionName=(\d+)/)?.[1]);
   if (!chrome) throw new Error('Este móvil no tiene Chrome, que es lo que hace de altavoz');
   if (chrome < CHROME_MIN) throw new Error(`Tiene Chrome ${chrome} y para hacer de altavoz hace falta el ${CHROME_MIN} o más nuevo: actualízalo desde Play Store`);
+  if (await oldKeys(serial)) await unlockOld(serial);
   const start = target => shell(serial, 'input keyevent KEYCODE_WAKEUP 2>&1; wm dismiss-keyguard 2>&1; am start -a android.intent.action.VIEW '
     + `-d ${quote(url)} ${target} --es com.android.browser.application_id mis-android 2>&1`);
   try {
@@ -466,7 +499,7 @@ async function openSpeaker(serial, url) {
   }
 }
 
-// Si Android ha cerrado Chrome a la fuerza (al tablet le pasaba sin memoria), al abrir el altavoz otra vez Chrome no
+// Si Android ha cerrado Chrome a la fuerza (pasa en los móviles con poca memoria), al abrir el altavoz otra vez Chrome no
 // reutiliza la pestaña de antes y se van acumulando. En cuanto se ve la nueva (la de la hora t), las más viejas de ese
 // mismo altavoz se cierran con las herramientas de desarrollo de Chrome, a las que adb llega con un forward. Nunca otras
 async function closeOldSpeakerTabs(serial, { port, id, t }) {
@@ -499,8 +532,8 @@ async function closeOldSpeakerTabs(serial, { port, id, t }) {
 // en cualquier punto: (lado corto / 2, lado corto / 2) cae dentro tanto en vertical como en horizontal.
 // Con el móvil bloqueado (PIN o patrón) el toque caería en la pantalla de bloqueo: entonces no se toca
 async function tapScreen(serial) {
-  const out = await shell(serial, "wm size; dumpsys window policy | grep -E 'mIsShowing=|showing='");
-  if (/\b(mIsShowing|showing)=true/.test(out)) throw new Error('El móvil está bloqueado: desbloquéalo y el panel activará el altavoz');
+  const out = await shell(serial, "wm size; dumpsys window policy | grep -E 'mIsShowing=|showing=|mShowingLockscreen='");
+  if (/\b(mIsShowing|showing|mShowingLockscreen)=true/.test(out)) throw new Error('El móvil está bloqueado: desbloquéalo y el panel activará el altavoz');
   const [, w = 600, h = 600] = [...out.matchAll(/(\d+)x(\d+)/g)].pop() || [];
   const p = Math.round(Math.min(w, h) / 2);
   try {
@@ -606,12 +639,15 @@ async function enableWifi(serial) {
       await connect(ip);
       return ip;
     } catch {
-      if (i === 5) throw switched || new Error(`El móvil no acepta la conexión por wifi en ${ip}: comprueba que está en la misma wifi que el PC`);
+      if (i === 5) {
+        if (switched && !/closed/.test(switched.message)) throw switched;
+        throw new Error(`El móvil no contesta por wifi en ${ip}. Comprueba que está en la misma wifi que el PC; si lo está, apaga y enciende su wifi y vuelve a probar: a los móviles viejos a veces se les queda colgada aunque parezca conectada`);
+      }
     }
   }
 }
 
 module.exports = {
-  PKG, adbPath, sdkOf, startServer, serials, devices, apps, appAction, versions, install, openStore, pullApk, awake,
+  PKG, adbPath, sdkOf, startServer, serials, serialno, devices, apps, appAction, versions, install, openStore, pullApk, awake,
   readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, touch, reverse, wifiIp, openSpeaker, closeOldSpeakerTabs, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
 };

@@ -1,7 +1,7 @@
 'use strict';
 // Página de altavoz: el panel la abre en Chrome en cada móvil. Ajusta su reloj con el del PC y empieza cada canción a la
 // hora que diga el PC con el audio del navegador, que sabe arrancar un sonido en un instante exacto.
-// Escrito para el Chrome más viejo de casa (el 101 del Nexus 6). Con ?silencio hace todo igual, pero sin que se oiga.
+// Escrito también para los Chrome viejos de Android 7. Con ?silencio hace todo igual, pero sin que se oiga.
 
 (function () {
   const $ = id => document.getElementById(id);
@@ -14,7 +14,7 @@
   const MAX_RATE = 0.005; // como mucho un 0,5 % más rápido o más lento: el tono no cambia de forma que se note
   const AHEAD = 45; // s antes de que acabe una canción en los que se descomprime la siguiente (ya descargada) para tenerla lista
   const SIMULATED = (Number(params.get('deriva')) || 0) / 1e6; // ?deriva=<ppm>: para probar, como si el audio se fuera desviando
-  // Modo ligero, para los Android 4 (el tablet: 835 MB de RAM y un procesador lento): la canción no se descomprime entera en
+  // Modo ligero, para los Android 4 (poca RAM y un procesador lento): la canción no se descomprime entera en
   // memoria (unos 80 MB, y otro tanto mientras se convierte), que allí acababa con Chrome; la va leyendo un <audio> poco a
   // poco. ?ligero lo fuerza y ?ligero=0 lo quita, para probar
   const LIGHT = params.has('ligero') ? params.get('ligero') !== '0' : /Android [1-4]\./.test(navigator.userAgent);
@@ -130,23 +130,40 @@
   }
 
   // El reloj del audio contra el de la página: s de audio menos s de página, según getOutputTimestamp (que ya cuenta lo que
-  // tarda el sonido en salir por el altavoz). Cada lectura suelta baila unos ms, y en algunos móviles (el Huawei) bastantes:
-  // perseguirlas hacía oscilar la música. Se usa una recta por las de los últimos 30 s. Una lectura que se sale más de 20 ms
-  // se ignora; tres seguidas es que el audio ha dado un salto o ha cambiado la salida (un altavoz Bluetooth) y se empieza de cero
+  // tarda el sonido en salir por el altavoz). Cada lectura suelta baila unos ms, y en algunos móviles bastantes:
+  // perseguirlas hacía oscilar la música. Se usa la mediana de las de los últimos 30 s, que no se mueve con las que bailan (las de
+  // algunos móviles van en diente de sierra, unos 30 ms). Una lectura que se sale más de 40 ms se ignora; tres seguidas es que el audio
+  // ha dado un salto o ha cambiado la salida (un altavoz Bluetooth) y se empieza de cero
   let audioPoints = [], audioFit = null, strange = 0;
+  function middle(points) {
+    const y = median(points.map(p => p.y));
+    return { at: () => y, slope: 0, rms: Math.sqrt(points.reduce((sum, p) => sum + (p.y - y) ** 2, 0) / points.length) };
+  }
   function audioMap(now) {
     const ts = ctx.getOutputTimestamp ? ctx.getOutputTimestamp() : null;
     if (ts && ts.performanceTime) {
       const point = { x: ts.performanceTime, y: ts.contextTime - ts.performanceTime / 1000 };
-      strange = audioFit && Math.abs(point.y - audioFit.at(point.x)) > 0.02 ? strange + 1 : 0;
-      if (strange === 3) audioPoints = [];
-      if (strange === 0 || strange === 3) {
+      strange = audioFit && Math.abs(point.y - audioFit.at(point.x)) > 0.04 ? strange + 1 : 0;
+      if (strange === 3) {
+        audioPoints = [];
+        strange = 0; // si no, tras una mala lectura el contador se pasaba de 3 y se quedaba congelado en ella para siempre
+      }
+      if (strange === 0) {
         audioPoints = audioPoints.filter(p => now - p.x < 30000).concat(point);
-        audioFit = fitLine(audioPoints, 10000, 1e-6); // pendiente: como mucho 1000 ppm (s por ms)
+        audioFit = middle(audioPoints);
       }
     }
     // Recién arrancado aún no hay lecturas: la latencia que diga Chrome
-    return audioFit ? audioFit.at(now) : ctx.currentTime - (ctx.outputLatency || ctx.baseLatency || 0) - now / 1000;
+    const direct = ctx.currentTime - (ctx.outputLatency || ctx.baseLatency || 0) - now / 1000;
+    // Lo que se oye no va segundos por detrás de lo que el audio ya ha calculado: una recta que diga eso no vale, y con ella las
+    // canciones se programarían para mucho más tarde (en silencio y con cara de estar sonando, porque el desfase se mide con ella)
+    if (audioFit && Math.abs(audioFit.at(now) - direct) > 2) {
+      audioPoints = [];
+      audioFit = null;
+      strange = 0;
+      if (current) current.errors = [];
+    }
+    return audioFit ? audioFit.at(now) : direct;
   }
 
   // El instante del reloj del audio en que se oye lo que suena a la hora serverMs del PC
@@ -156,6 +173,8 @@
   }
 
   const posAt = (c, t) => c.pos + (t - c.at) * c.rate; // por dónde va la canción (s) en el instante t del reloj del audio
+  // Lo programado para más tarde de lo que da de margen el PC (menos de 2 s, con el retraso) aún no suena: no se dice que sí
+  const sounding = () => Boolean(current) && (LIGHT || current.at - ctx.currentTime < 2);
   const median = list => list.slice().sort((a, b) => a - b)[list.length >> 1];
 
   // Si ya suena, mide cuánto se ha ido de donde debería estar y lo corrige acelerando o frenando un poco, sin saltos. Solo
@@ -254,7 +273,7 @@
   }
 
   // El Chrome de un móvil con poca memoria no descarga nada de un <audio> hasta que suena (no hace caso de preload): se le
-  // hace sonar en silencio hasta que arranca, y se para. El del tablet ni eso deja antes de que alguien toque la página
+  // hace sonar en silencio hasta que arranca, y se para. El de Android 4 ni eso deja antes de que alguien toque la página
   function warm(el) {
     el.muted = true;
     el.warming = el.play().then(() => el.pause(), e => {
@@ -351,6 +370,24 @@
   }
   if (LIGHT) setInterval(() => { if (current && state && track) schedule(); }, 500);
 
+  // Mientras la música va, una señal inaudible mantiene abierta la salida de audio, también si este móvil está callado o entre
+  // canciones. Si no, Chrome la cierra a los 30 s sin sonido; al reabrirla, la canción arranca desplazada y a los pocos segundos
+  // se recoloca de golpe, cada móvil en un momento distinto
+  let keeper = null;
+  function keepOutput(on) {
+    if (LIGHT || !ctx || on === Boolean(keeper)) return;
+    if (on) {
+      keeper = ctx.createConstantSource();
+      keeper.offset.value = 1e-5;
+      keeper.connect(ctx.destination);
+      keeper.start();
+    } else {
+      keeper.stop();
+      keeper.disconnect();
+      keeper = null;
+    }
+  }
+
   // ── Lo que hay que hacer según lo que diga el PC; se llama con cada aviso y cada poco ──
 
   function update() {
@@ -366,8 +403,9 @@
     const go = s && s.song && s.playing && s.on && s.startAt != null && track && track.song === s.song
       && canPlay() && clock.ok;
     if (go) schedule(); else stopSound();
+    keepOutput(Boolean(s && s.playing));
     prepare(s);
-    phase = !canPlay() ? 'tap' : error ? 'error' : loading ? 'loading' : current ? 'playing' : track ? 'ready' : 'idle';
+    phase = !canPlay() ? 'tap' : error ? 'error' : loading ? 'loading' : sounding() ? 'playing' : track ? 'ready' : 'idle';
     render();
     report();
   }
@@ -451,7 +489,7 @@
       : !s.on ? 'Aquí está silenciado'
       : loading ? 'Cargando…'
       : !s.playing ? 'En pausa'
-      : current ? 'Sonando' : 'Preparando…';
+      : sounding() ? 'Sonando' : 'Preparando…';
     const until = s.stopAt && s.playing
       ? ' · hasta las ' + new Date(s.stopAt).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : '';
     $('state-text').textContent = text + until;
@@ -630,7 +668,7 @@
   });
 
   // Descanso: si nadie la toca en unos minutos se queda en negro y el PC baja el brillo del móvil al mínimo. En las pantallas
-  // OLED (como la del Nexus 6) el negro apaga los píxeles: no se ve nada ni se graba la imagen. Vuelve en cuanto baja el dedo,
+  // OLED el negro apaga los píxeles: no se ve nada ni se graba la imagen. Vuelve en cuanto baja el dedo,
   // aunque lo arrastre (así no hay clic), y ese toque no pulsa nada. Solo descansa estando delante: con otra app delante, el
   // brillo tiene que estar normal. Sin pantalla descansa a los 15 s, y al descansar el panel le apaga la pantalla
   const REST = (Number(params.get('descanso')) || 180) * 1000; // ?descanso=<s>, para probar
