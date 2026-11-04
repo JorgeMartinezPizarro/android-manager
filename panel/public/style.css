@@ -803,6 +803,7 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
 .cal td { padding: 7px 10px; border-top: 1px solid var(--border); }
 .cal td:first-child { font-weight: 600; white-space: nowrap; }
 .cal-state.bad { color: var(--danger); }
+.cal td.cal-go { width: 1%; padding-right: 0; text-align: right; }
 
 /* ── En el móvil ── Las pestañas van abajo, como en una app, y las tablas pasan a tarjetas: cada fila es una tarjeta y cada
    columna de un móvil, una etiqueta con su nombre (data-label). Así no se corta nada ni hay que deslizar de lado */
@@ -858,4 +859,9 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
   .speakers .delay-val { height: 32px; padding: 0 4px; }
   .speakers .sp-delay::before { content: "Retraso"; margin-right: 8px; font-size: 13px; color: var(--muted); }
   .speakers .row-actions { order: 3; }
+  /* Calibrar: el nombre arriba y, debajo, cómo va la medida y su «Medir» */
+  .cal tr { display: grid; grid-template-columns: 1fr auto; border-top: 1px solid var(--border); padding: 8px 0; }
+  .cal td { border: 0; padding: 2px 0; }
+  .cal td:first-child { grid-column: 1 / -1; white-space: normal; }
+  .cal td.cal-go { grid-row: 2; grid-column: 2; align-self: center; padding-left: 10px; }
 }

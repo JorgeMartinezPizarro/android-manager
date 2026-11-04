@@ -1,6 +1,8 @@
 // Panel web para gestionar las apps de los Android de casa, sin dependencias: node panel/server.js [--open]
 'use strict';
 const http = require('node:http');
+const https = require('node:https');
+const net = require('node:net');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -10,6 +12,7 @@ const { pipeline } = require('node:stream/promises');
 const adb = require('./adb');
 const cfg = require('./config');
 const catalog = require('./catalog');
+const cert = require('./cert');
 const limpieza = require('./limpieza');
 const mirror = require('./mirror');
 const music = require('./music');
@@ -275,6 +278,9 @@ on('POST', '/api/settings/apply', async ({ body: { serials, key } }) => {
 
 on('GET', '/api/music', () => music.status());
 
+// La hora del PC (ms, la misma de la música), para que la calibración desde un móvil ponga su reloj en hora
+on('GET', '/api/clock', () => ({ t: performance.timeOrigin + performance.now() }));
+
 // id: el número de serie del móvil, que no cambia aunque cambie su conexión (serial)
 // again: recargar la página aunque ya esté abierta y sonando
 on('POST', '/api/music/open', async ({ body: { serial, id, again } }) => {
@@ -399,7 +405,9 @@ function openBrowser(url) {
 // ── Desde otros dispositivos de casa ──
 // El panel escucha siempre en este PC (127.0.0.1). Con «red» encendido (se guarda en panel.json), además en las IP
 // privadas del PC, y solo atiende a direcciones de la red de casa: aunque alguien abriera el puerto en el router, a
-// internet no le contesta. No pide contraseña: cualquiera conectado a la misma red puede usarlo
+// internet no le contesta. No pide contraseña: cualquiera conectado a la misma red puede usarlo. Por la red va por https
+// (cert.js), para que el navegador deje usar el micrófono al calibrar; en este PC no hace falta: localhost ya cuenta como
+// seguro
 const PRIVATE_IP = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|127\.|::1$|f[cd][0-9a-f]{2}:|fe80:)/i;
 // Por la red se tiene que llegar con una IP o con el nombre del PC: así una web de fuera no puede hacerse pasar por la
 // página del panel cambiando a qué IP apunta su nombre («DNS rebinding»)
@@ -421,17 +429,46 @@ const privateIps = () => Object.entries(os.networkInterfaces()).flatMap(([name, 
   .filter(i => i.family === 'IPv4' && !i.internal && PRIVATE_IP.test(i.address) && !i.address.startsWith('169.254.'))
   .map(i => ({ address: i.address, virtual: VIRTUAL_MAC.test(i.mac) || VIRTUAL_NAME.test(name) })));
 
-// Escucha en las IP privadas del PC (se mira cada minuto: cambian si cambia de red), o en ninguna si está apagado
+// En el mismo puerto, https y http: si lo primero que llega es el saludo de TLS (el byte 22), la conexión va al servidor
+// https; si no, es http y se le manda a la misma dirección con https (así siguen valiendo los enlaces de antes)
+function lanServer(tls) {
+  const secure = https.createServer(tls, handle);
+  const plain = http.createServer((req, res) => {
+    if (!allowed(req)) return send(res, 403, { error: 'Prohibido' });
+    res.writeHead(308, { Location: `https://${req.headers.host}${req.url}` });
+    res.end();
+  });
+  const server = net.createServer({ pauseOnConnect: true }, socket => {
+    socket.on('error', () => socket.destroy());
+    const peek = () => {
+      const first = socket.read(1);
+      if (!first) return void socket.once('readable', peek);
+      socket.unshift(first);
+      (first[0] === 22 ? secure : plain).emit('connection', socket);
+      socket.resume();
+    };
+    socket.once('readable', peek);
+  });
+  server.secure = secure;
+  return server;
+}
+
+// Escucha en las IP privadas del PC (se mira cada minuto: cambian si cambia de red), o en ninguna si está apagado. El
+// certificado lleva las IP de las tarjetas reales (las virtuales cambian a cada rato)
 function updateLan() {
-  const want = new Set(lanOn ? privateIps().map(i => i.address) : []);
+  const ips = lanOn ? privateIps() : [];
+  const want = new Set(ips.map(i => i.address));
   for (const [ip, s] of lanServers) {
     if (want.has(ip)) continue;
     s.close();
     lanServers.delete(ip);
   }
+  if (!want.size) return;
+  const { key, cert: crt, changed } = cert.get(ips.filter(i => !i.virtual).map(i => i.address));
+  if (changed) for (const s of lanServers.values()) s.secure.setSecureContext({ key, cert: crt });
   for (const ip of want) {
     if (lanServers.has(ip)) continue;
-    const s = http.createServer(handle);
+    const s = lanServer({ key, cert: crt });
     s.on('error', e => {
       console.log(`  red: no puedo escuchar en ${ip}: ${e.message}`);
       lanServers.delete(ip);
@@ -445,7 +482,7 @@ function updateLan() {
 function lanStatus() {
   const listening = privateIps().filter(i => lanServers.has(i.address));
   const real = listening.filter(i => !i.virtual);
-  const urls = (real.length ? real : listening).map(i => `http://${i.address}:${PORT}`);
+  const urls = (real.length ? real : listening).map(i => `https://${i.address}:${PORT}`);
   // qr: para abrir la música desde un móvil apuntándole con la cámara, sin escribir la dirección
   return { on: lanOn, urls, qr: lanOn && urls.length ? qrSvg(`${urls[0]}/#/music`) : null };
 }

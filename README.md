@@ -81,9 +81,9 @@ Consejo: reserva en el router una IP fija para cada móvil.
     preguntaría con qué app abrir el enlace, el panel elige la app antes que el navegador: un vídeo, en YouTube.
   - **Calendario** abre el que tenga cada móvil en la última vista que se usó: para verlo en modo mes, elige
     «Mes» una vez a mano en cada uno. Las apps que solo funcionan en vertical no giran aunque pidas horizontal.
-  - **Hacer sonar**, para encontrarlo: pone un temporizador en el reloj si el móvil lo deja (como el OPPO) o, si no,
+  - **Hacer sonar**, para encontrarlo: pone un temporizador en el reloj si el móvil lo deja o, si no,
     reproduce la alarma en su reproductor de música con la música al máximo. Si no tiene ninguna de las dos
-    cosas (como el Nexus), lo dice.
+    cosas, lo dice.
   - **Desbloquear** solo quita el bloqueo de deslizar. Con PIN o patrón, adb no puede saltárselo: escríbelo
     tú desde «Ver pantalla».
   - **Sus apps** (las tuyas y, si quieres, las del sistema) para abrirlas, desactivarlas, desinstalarlas o
@@ -148,7 +148,7 @@ Consejo: reserva en el router una IP fija para cada móvil.
   - La que va a sonar después sale debajo del título («Después: …») y los móviles la van preparando mientras suena la
     actual: la descargan enseguida y la descomprimen en sus últimos 45 s (descomprimida ocupa mucho, y los móviles viejos
     tienen poca memoria). Así pasan de una canción a otra sin esperar a que cargue. En aleatorio se elige de antemano.
-  - **Modo ligero** (solo en Android 4, como el tablet SM-T110): allí descomprimir la canción entera (unos 80 MB, y otro
+  - **Modo ligero** (Android 4 o anterior, móviles y tablets viejos con poca memoria): allí descomprimir la canción entera (unos 80 MB, y otro
     tanto mientras se convierte) dejaba a Chrome sin memoria. La página se da cuenta sola y la escucha con un `<audio>`,
     que la va leyendo a trozos; se mantiene a la par mirando por dónde va, acelerando o frenando como mucho un 1 % (sin
     cambiar el tono) o, si se ha ido más de un cuarto de segundo, volviendo a arrancar donde toca. `?ligero` en la
@@ -156,12 +156,18 @@ Consejo: reserva en el router una IP fija para cada móvil.
   - **Prueba de sincronía**: un pitido por segundo. Si un móvil se oye antes que los demás, súbele el **retraso**;
     si se oye después, bájalo. Va de milisegundo en milisegundo con − y +, o escribe el número. Un altavoz Bluetooth suele
     ir un poco por detrás: ese móvil, con retraso negativo.
-  - **Calibrar** lo hace con el micrófono del PC en vez de a oído: hace sonar uno a uno los altavoces encendidos (los
-    silenciados no se tocan) con un barrido corto cada segundo, lo graba y busca cuándo llega cada barrido, con menos de
-    1 ms de error aunque haya eco. Lo que tarda el micrófono es igual para todos y se anula, así que queda cuánto antes o
-    después se oye cada uno desde donde está el micrófono: ponlo donde escuchas. Al acabar enseña lo medido y los
-    retrasos que los cuadran («Aplicar» los pone), y la música vuelve por donde iba. Unos 10 s por altavoz; el que va en
-    modo ligero, hasta 45 s, porque tarda más en cuadrarse al arrancar. El navegador pide permiso para el micrófono.
+  - **Calibrar** lo hace con un micrófono en vez de a oído: el del PC o, abriendo el panel en el móvil, el del móvil.
+    Hace sonar cada altavoz encendido por su cuenta (los silenciados no se tocan) con un barrido corto cada segundo, lo
+    graba y busca cuándo llega cada barrido, con menos de 1 ms de error aunque haya eco. Lo que tarda el micrófono es
+    igual para todos y se anula, así que queda cuánto antes o después se oye cada uno. **Medir todos** los mide seguidos
+    desde donde está el micrófono: ponlo donde escuchas. Con el móvil se puede ir **habitación por habitación**: junto a
+    cada altavoz (a un par de pasos, siempre a la misma distancia), su **Medir**; entre uno y otro la calibración calla y el
+    micrófono sigue abierto, así que lo medido se puede comparar aunque estén lejos. El móvil pone su reloj en hora con el
+    del PC antes de cada medida y no se apaga mientras el diálogo está abierto. Con dos o más medidos enseña cuánto se oye
+    cada uno respecto al resto y los retrasos que los cuadran («Aplicar» los pone); al cerrar, la música vuelve por donde
+    iba. Unos 10 s por altavoz; el que va en modo ligero, hasta 45 s, porque tarda más en cuadrarse al arrancar. El
+    navegador pide permiso para el micrófono, y solo lo da en páginas seguras: en el PC (localhost) o por https, que es
+    como se abre el panel desde otro aparato.
   - La página del altavoz ocupa toda la pantalla de cada móvil y hace de mando: arriba la canción (en una línea: si no
     cabe, se desliza despacio para enseñarla entera; con el artista debajo y por dónde va) y los botones de anterior, pausa y siguiente, que valen para todos los altavoces; abajo,
     **Elegir canción** y el volumen de ese móvil: **Bajar**, **Silenciar** (en ámbar mientras está silenciado; con otro
@@ -169,8 +175,8 @@ Consejo: reserva en el router una IP fija para cada móvil.
     el de los botones del móvil y el de la barra del panel. Elegir canción abre la lista a pantalla completa, con letra
     grande y buscador; se cierra al elegir una, con la X o con el botón de volver del móvil. La pantalla se queda encendida mientras la página está delante
     (si se apaga, Android puede dormir Chrome). Déjalos enchufados. Si nadie la toca en 3 minutos descansa: la página se queda
-    en negro y el panel baja el brillo del móvil al mínimo. En las pantallas OLED (como la del Nexus 6) el negro apaga los
-    píxeles, así que no se ve nada ni se queda grabada la imagen. Los móviles que en manual no bajan del todo (el Nexus 6 se
+    en negro y el panel baja el brillo del móvil al mínimo. En las pantallas OLED el negro apaga los
+    píxeles, así que no se ve nada ni se queda grabada la imagen. Los móviles que en manual no bajan del todo (alguno se
     queda en 17 de 255) se dejan en automático con el ajuste al mínimo, que a oscuras sí llega a 1. Vuelve al tocar la
     pantalla o arrastrar el dedo por ella, con el brillo que tenía (también el automático). El toque que la despierta no pulsa
     nada: el botón que hubiera debajo se pulsa con el siguiente.
@@ -182,7 +188,7 @@ Consejo: reserva en el router una IP fija para cada móvil.
     solo cuenta la más nueva: las demás se callan y dicen que hay otra; al volver a una de ellas, se recarga y pasa a ser
     ella el altavoz.
   - El PC tiene que estar encendido con el panel en marcha: la música sale de él.
-  - Los móviles con Android 7, como el Nexus 6, no dejan que adb les abra la conexión con el PC: su página llega al PC
+  - Los móviles con Android 7 no dejan que adb les abra la conexión con el PC: su página llega al PC
     por la wifi de casa, a la IP del PC. Ahí Chrome no deja mantener la pantalla encendida, así que déjalos enchufados
     con «Pantalla encendida mientras carga» (en Ajustes).
 - **Ajustes**: un perfil común para todos los móviles: modo oscuro, brillo automático, cuándo se apaga la
@@ -218,6 +224,7 @@ cerrado. Las versiones anteriores guardaban estos ficheros junto al proyecto; el
 | `apks/` | Los APK propios y la caché de descargas de F-Droid. |
 | `settings.json` | El perfil de ajustes comunes y, en `moviles`, lo que algún móvil tiene distinto. Lo escribe el panel. |
 | `panel.json` | Si se puede abrir el panel desde otros dispositivos de casa. Lo escribe el panel. |
+| `panel-https.json` | El certificado (y su clave) con el que el panel se abre por https desde otros dispositivos. Si lo borras, hace otro y cada navegador vuelve a avisar una vez. |
 | `musica/` | Las canciones para la pestaña Música. |
 | `music.json` | Los móviles que hacen de altavoz (si suenan y su retraso), si las canciones van en aleatorio y el brillo que tenía cada móvil antes de bajárselo. Lo escribe el panel: no lo borres con los móviles en reposo, o se quedarán con el brillo al mínimo. |
 | `keep.txt` | Lo regenera el panel desde `apps.json` para que `droids.sh prune` sepa qué conservar. La primera vez se guarda tu versión en `keep.txt.bak`. |
@@ -229,8 +236,13 @@ cerrado. Las versiones anteriores guardaban estos ficheros junto al proyecto; el
 
 El panel escucha en este PC. Con «Abrir el panel desde otros dispositivos de casa» (al final de Dispositivos) escucha
 también en las IP privadas del PC y se abre desde el móvil, la tablet u otro ordenador de la misma red, en la dirección
-que enseña (por ejemplo http://192.168.1.12:8765), o apuntando con la cámara del móvil al código QR que sale debajo, que
-abre directamente la música. Chrome avisa de que la conexión no es segura porque el panel no usa https: «Ir al sitio».
+que enseña (por ejemplo https://192.168.1.12:8765), o apuntando con la cámara del móvil al código QR que sale debajo, que
+abre directamente la música. Por la red va por https, para que el navegador deje usar el micrófono al calibrar: en el
+mismo puerto, quien llega por http se pasa a https. El certificado lo hace el propio panel la primera vez (se guarda en
+`datos/panel-https.json` y vale un año; se rehace solo antes de caducar o si el PC estrena IP), así que cada navegador
+avisa una vez de que no es de confianza: en Chrome, «Configuración avanzada» y «Acceder a…»; en Firefox, «Avanzado…» y
+«Aceptar el riesgo y continuar». Si en el móvil Chrome no carga nada, prueba con Firefox. En este PC sigue siendo
+http://localhost:8765, que ya cuenta como seguro.
 Solo contesta a direcciones de casa (192.168.x.x, 10.x.x.x…), así
 que aunque alguien abriera el puerto en el router, a internet no le contesta; y por la red solo se entra con la IP o el
 nombre del PC, para que una web de fuera no pueda hacerse pasar por el panel. No pide contraseña: cualquiera conectado

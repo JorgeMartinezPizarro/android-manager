@@ -169,9 +169,10 @@ const lanHtml = ({ on, urls, qr }) => `
     Solo dentro de casa: desde internet no contesta. No pide contraseña, así que cualquiera conectado a tu red podría usarlo.
     «Ver pantalla» abre la pantalla del móvil en este PC.</p>
   ${qr ? `<div class="lan-qr"><div class="qr-code">${qr}</div>
-    <p class="muted small">Desde un móvil, apúntale con la cámara: abre la música del panel. Chrome avisará de que la
-      conexión no es segura (el panel no usa https): pulsa «Ir al sitio». Luego, en ⋮, «Añadir a pantalla de inicio» lo
-      deja a mano.</p></div>` : ''}`;
+    <p class="muted small">Desde un móvil, apúntale con la cámara: abre la música del panel. La primera vez el navegador
+      avisa de que la conexión no es privada: el certificado lo ha hecho el propio panel en este PC, no una empresa que lo
+      avale. En Chrome, «Configuración avanzada» y «Acceder a…»; en Firefox, «Avanzado…» y «Aceptar el riesgo y
+      continuar». Si no carga nada, prueba con Firefox. Luego, en ⋮, «Añadir a pantalla de inicio» lo deja a mano.</p></div>` : ''}`;
 
 async function loadGrid(current = () => true) {
   const { devices, saved } = await api('/devices');
@@ -1075,7 +1076,7 @@ function renderMusic() {
     <div class="section-head"><h2>Altavoces</h2>
       <div class="actions">
         <button class="btn" id="all-btn" data-act="music" data-action="none"></button>
-        <button class="btn" data-act="calibrate" title="Mide con el micrófono de este PC cuándo se oye cada altavoz encendido y les pone el retraso que los cuadra">${ICON.mic}Calibrar</button>
+        <button class="btn" data-act="calibrate" title="Mide con el micrófono de ${HERE} cuándo se oye cada altavoz encendido y les pone el retraso que los cuadra">${ICON.mic}Calibrar</button>
         <button class="btn" data-act="speaker-all" title="Abre la página de altavoz en todos los móviles conectados">Abrir en todos</button>
         <button class="btn" data-act="screen-all" title="Abre en este PC la pantalla de cada móvil, para verlas y manejarlas a la vez">Mostrar todos</button>
       </div></div>
@@ -1233,15 +1234,33 @@ async function refreshMusic() {
 
 // ── Calibrar con el micrófono ──
 // Cada altavoz se cuadra con el reloj del PC, pero cada móvil tarda distinto en sacar el sonido por su altavoz, y eso solo
-// se sabe oyéndolo. El panel hace sonar uno a uno los que están encendidos, con un barrido cada segundo (CHIRP, el mismo de
-// music.js), lo graba con el micrófono de este PC y busca cuándo llega cada barrido. Lo que tarde el micrófono es igual
-// para todos y se anula: queda cuánto antes o después se oye cada uno, desde donde esté el micrófono
+// se sabe oyéndolo. El panel hace sonar cada altavoz por su cuenta, con un barrido cada segundo (CHIRP, el mismo de
+// music.js), lo graba con el micrófono de este aparato y busca cuándo llega cada barrido. Lo que tarde el micrófono es
+// igual para todos y se anula: queda cuánto antes o después se oye cada uno. Se pueden medir todos seguidos desde donde
+// se escucha, o uno a uno junto a cada altavoz, yendo con el móvil de habitación en habitación
 
 const CAL = '*calibrar';
 const CHIRP = { from: 1000, to: 4000, length: 0.04 };
-const pcNow = () => performance.timeOrigin + performance.now();
+const HERE = /Android|iPhone|iPad/i.test(navigator.userAgent) ? 'este móvil' : 'este PC';
 const pause = ms => new Promise(r => setTimeout(r, ms));
 const middle = list => { const s = [...list].sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+// La hora del PC vista desde aquí: en el propio PC, la misma; desde un móvil, su reloj más la diferencia, que sale de
+// preguntarle la hora varias veces y quedarse con las respuestas más rápidas (las que menos ha deformado la wifi)
+const clock = { offset: 0, samples: [] };
+const pcNow = () => performance.timeOrigin + performance.now() + clock.offset;
+
+async function syncClock(n = 10) {
+  for (let i = 0; i < n; i++) {
+    const t0 = performance.now();
+    const { t } = await api('/clock');
+    const t1 = performance.now();
+    clock.samples.push({ rtt: t1 - t0, offset: t - (performance.timeOrigin + (t0 + t1) / 2), at: t1 });
+  }
+  clock.samples = clock.samples.filter(s => performance.now() - s.at < 60000);
+  const best = [...clock.samples].sort((a, b) => a.rtt - b.rtt).slice(0, Math.max(3, Math.ceil(clock.samples.length / 3)));
+  clock.offset = middle(best.map(s => s.offset));
+}
 
 function chirpTemplate(rate) {
   const out = new Float32Array(Math.round(CHIRP.length * rate));
@@ -1273,8 +1292,10 @@ function findChirp(rec, tpl, from, to) {
   return { index: from + first, quality: peak / Math.sqrt(energy / corr.length) };
 }
 
-// Graba el micrófono sin que el navegador lo toque (ni quitar eco ni ruido ni subir el volumen) en rec.data. rec.diff
-// pasa del reloj del audio al del PC (ms), con lo que dice getOutputTimestamp cada 200 ms
+// Graba el micrófono sin que el navegador lo toque (ni quitar eco ni ruido ni subir el volumen). Guarda el último minuto
+// (rec.read lo saca por número de muestra), así puede quedarse abierto mientras se va de un altavoz a otro: con el mismo
+// micrófono abierto, lo que tarda es lo mismo en todas las medidas. rec.diff pasa del reloj del audio a la hora del PC
+// (ms), con lo que dice getOutputTimestamp cada 200 ms
 async function startMic() {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
@@ -1299,18 +1320,27 @@ async function startMic() {
   const node = new AudioWorkletNode(ac, 'grabar'), mute = ac.createGain();
   mute.gain.value = 0; // con salida, para que Chrome lo haga funcionar; en silencio
   ac.createMediaStreamSource(stream).connect(node).connect(mute).connect(ac.destination);
-  const rec = { rate: ac.sampleRate, data: new Float32Array(ac.sampleRate * 300), first: null, length: 0, clock: [] };
+  const size = ac.sampleRate * 60;
+  const rec = { rate: ac.sampleRate, data: new Float32Array(size), first: null, length: 0, clock: [] };
   node.port.onmessage = ({ data: { frame, data } }) => {
     if (rec.first === null) rec.first = frame;
-    const at = frame - rec.first;
-    if (at + data.length <= rec.data.length) rec.data.set(data, at);
+    const at = frame - rec.first, i = at % size, n = Math.min(data.length, size - i);
+    rec.data.set(data.subarray(0, n), i);
+    if (n < data.length) rec.data.set(data.subarray(n), 0);
     rec.length = Math.max(rec.length, at + data.length);
+  };
+  rec.read = (from, to) => {
+    if (from < Math.max(0, rec.length - size) || to > rec.length || to <= from) return null;
+    const out = new Float32Array(to - from), i = from % size, n = Math.min(out.length, size - i);
+    out.set(rec.data.subarray(i, i + n));
+    if (n < out.length) out.set(rec.data.subarray(0, out.length - n), n);
+    return out;
   };
   const tick = setInterval(() => {
     const ts = ac.getOutputTimestamp();
     if (ts.performanceTime) rec.clock = rec.clock.slice(-50).concat(performance.timeOrigin + ts.performanceTime - ts.contextTime * 1000);
   }, 200);
-  rec.diff = () => middle(rec.clock);
+  rec.diff = () => middle(rec.clock) + clock.offset;
   rec.stop = () => {
     clearInterval(tick);
     for (const t of stream.getTracks()) t.stop();
@@ -1325,14 +1355,22 @@ async function startMic() {
   return rec;
 }
 
-// El panel pone a sonar la calibración desde el principio (con ese altavoz solo) y devuelve la hora del PC a la que empieza
-async function restartCal(previous) {
-  await post('/music/seek', { position: 0 });
-  for (let i = 0; i < 60; i++) {
+// Pone a sonar la calibración desde el principio, solo en ese altavoz, y devuelve la hora del PC a la que empieza (null si
+// se cancela antes)
+async function startCal(id, previous, cancelled) {
+  await post('/music/solo', { id });
+  const { now } = await api('/music');
+  if (now.song !== CAL) await post('/music/play', { song: CAL });
+  else {
+    await post('/music/seek', { position: 0 });
+    if (!now.playing) await post('/music/toggle');
+  }
+  for (let i = 0; i < 60 && !cancelled(); i++) {
     const { now } = await api('/music');
     if (now.song === CAL && now.startAt && now.startAt !== previous) return now.startAt;
     await pause(300);
   }
+  if (cancelled()) return null;
   throw new Error('La calibración no ha empezado a sonar');
 }
 
@@ -1340,14 +1378,16 @@ async function restartCal(previous) {
 // mediana. El modo ligero (Android 4) tarda más en cuadrarse tras arrancar, así que se le espera más
 async function measureRoom(rec, tpl, { startAt, delay, light }, cancelled, progress) {
   const limit = pcNow() + (light ? 45000 : 15000);
-  const toIndex = ms => (ms - rec.diff()) * rec.rate / 1000 - rec.first;
+  const toIndex = ms => Math.round((ms - rec.diff()) * rec.rate / 1000 - rec.first);
   let s = Math.max(1, Math.ceil((pcNow() + 1500 - startAt - delay) / 1000)); // el anterior ya callado y este sonando
   let last = null;
   const found = [];
   while (pcNow() < limit && !cancelled()) {
     const center = startAt + delay + s * 1000 + (last ?? 0), span = last == null ? 500 : 80;
-    if (rec.length < toIndex(center + span) + tpl.length + rec.rate * 0.1) { await pause(150); continue; }
-    const hit = findChirp(rec.data, tpl, toIndex(center - span), toIndex(center + span));
+    const from = Math.max(0, toIndex(center - span)), to = toIndex(center + span);
+    if (rec.length < to + tpl.length + rec.rate * 0.1) { await pause(150); continue; }
+    const part = rec.read(from, to + tpl.length);
+    const hit = part && findChirp(part, tpl, 0, to - from);
     s++;
     if (!hit || hit.quality < 8) {
       last = null; // no se oyó: el siguiente se busca en todo el segundo
@@ -1355,7 +1395,7 @@ async function measureRoom(rec, tpl, { startAt, delay, light }, cancelled, progr
       progress(found);
       continue;
     }
-    last = (hit.index + rec.first) * 1000 / rec.rate + rec.diff() - (startAt + delay + (s - 1) * 1000);
+    last = (from + hit.index + rec.first) * 1000 / rec.rate + rec.diff() - (startAt + delay + (s - 1) * 1000);
     found.push({ err: last, quality: hit.quality });
     progress(found);
     const four = found.slice(-4);
@@ -1367,8 +1407,10 @@ async function measureRoom(rec, tpl, { startAt, delay, light }, cancelled, progr
   return null;
 }
 
-// Los que se calibran: abiertos, sonando y encendidos (los silenciados se dejan como están)
+// Los que se calibran: abiertos, sonando y encendidos (los silenciados se dejan como están). El micrófono se abre con la
+// primera medida y sigue abierto hasta cerrar; al cerrar, vuelve la música como estaba
 async function calibrate() {
+  if (!navigator.mediaDevices?.getUserMedia) return toast('Este navegador no deja usar el micrófono aquí: abre el panel por https', 'error');
   await refreshMusic();
   const { rooms } = state.music;
   const list = state.devices.filter(d => rooms[d.serialno]?.on && rooms[d.serialno].linked
@@ -1379,61 +1421,110 @@ async function calibrate() {
   dlg.innerHTML = `<form method="dialog">
       <h2>Calibrar con el micrófono</h2>
       <div class="dlg-body">
-        <p>Pon el micrófono de este PC donde escuchas la música. Sonarán unos barridos cortos, cada altavoz por su cuenta
-          (unos 10 s cada uno; el tablet, algo más), y el panel medirá cuándo llega cada uno. Luego vuelve la canción.</p>
+        <p>Cada altavoz sonará por su cuenta con unos barridos cortos (unos 10 s; los Android 4 o anteriores, algo más) y ${HERE} medirá
+          cuándo llega cada uno. <strong>Desde donde escuchas:</strong> «Medir todos». <strong>Habitación por
+          habitación:</strong> ponte a un par de pasos de cada altavoz y pulsa su «Medir»; lo medido se guarda mientras
+          vas al siguiente.</p>
         <table class="cal"><tbody>${list.map(d => `<tr data-id="${esc(d.serialno)}"><td>${esc(title(d))}</td>
-          <td class="cal-state muted">En espera</td></tr>`).join('')}</tbody></table>
-        <p class="muted small" id="cal-note">Los silenciados no se miden. El navegador pedirá permiso para usar el micrófono.</p>
+          <td class="cal-state muted">Sin medir</td>
+          <td class="cal-go"><button class="btn small" type="button" data-measure="${esc(d.serialno)}">Medir</button></td></tr>`).join('')}</tbody></table>
+        <p class="muted small" id="cal-note">Los silenciados no se miden. El navegador pedirá permiso para usar el micrófono.
+          Al cerrar, vuelve la música como estaba.</p>
       </div>
-      <menu><button class="btn" value="close" id="cal-close">Cancelar</button><button class="btn primary" type="button" id="cal-go">Empezar</button></menu>
+      <menu><button class="btn" type="button" id="cal-cancel">Cancelar</button><button class="btn" type="button" id="cal-all">Medir todos</button>
+        <button class="btn primary" type="button" id="cal-apply" disabled>Aplicar</button></menu>
     </form>`;
   dlg.showModal();
-  let cancelled = false;
-  dlg.addEventListener('close', () => { cancelled = true; }, { once: true });
-  const row = d => dlg.querySelector(`tr[data-id="${CSS.escape(d.serialno)}"] .cal-state`);
-  $('#cal-go').onclick = () => runCalibration(list, row, () => cancelled).catch(e => {
-    $('#cal-go').disabled = false;
-    $('#cal-note').textContent = e.name === 'NotAllowedError' ? 'Sin permiso para el micrófono: dalo en el candado de la barra de direcciones' : e.message;
+  const cal = { results: new Map(), busy: false, cancelled: false, rec: null, startAt: null, running: null };
+  cal.row = d => dlg.querySelector(`tr[data-id="${CSS.escape(d.serialno)}"] .cal-state`);
+  const run = targets => {
+    if (cal.busy) return;
+    cal.running = measure(cal, targets).catch(e => {
+      $('#cal-note').textContent = e.name === 'NotAllowedError' ? 'Sin permiso para el micrófono: dalo en el candado de la barra de direcciones' : e.message;
+    });
+  };
+  for (const btn of dlg.querySelectorAll('[data-measure]')) btn.onclick = () => run(list.filter(d => d.serialno === btn.dataset.measure));
+  $('#cal-all').onclick = () => run(list);
+  // Al acabar, sin esperar al evento close del diálogo: con la página oculta (el móvil bloqueado) no llega hasta que se ve
+  const finish = () => {
+    if (cal.cancelled) return;
+    cal.cancelled = true;
+    endCalibration(cal);
+  };
+  $('#cal-cancel').onclick = () => { finish(); dlg.close(); };
+  $('#cal-apply').onclick = () => busy($('#cal-apply'), async () => {
+    for (const r of proposal(cal)) await post('/music/room', { id: r.d.serialno, delay: r.next });
+    finish();
+    dlg.close();
+    toast('Retrasos puestos');
   });
+  dlg.addEventListener('close', finish, { once: true }); // con Esc
 }
 
-async function runCalibration(list, row, cancelled) {
-  const go = $('#cal-go');
-  go.disabled = true;
-  $('#cal-note').textContent = 'Abriendo el micrófono…';
-  const rec = await startMic();
-  const tpl = chirpTemplate(rec.rate);
-  const before = state.music, results = [];
+// Mide esos altavoces uno tras otro y luego calla la calibración (para no oírla mientras se va al siguiente)
+async function measure(cal, targets) {
+  cal.busy = true;
+  calButtons(cal);
+  const note = $('#cal-note');
   try {
-    $('#cal-note').textContent = 'Preparando la calibración en los altavoces…';
-    await post('/music/solo', { id: list[0].serialno });
-    await post('/music/play', { song: CAL });
-    let startAt = null;
-    for (const d of list) {
-      if (cancelled()) break;
-      const room = state.music.rooms[d.serialno];
-      row(d).textContent = 'Arrancando…';
-      await post('/music/solo', { id: d.serialno });
-      startAt = await restartCal(startAt);
-      $('#cal-note').textContent = `Escuchando ${title(d)}…`;
-      const r = await measureRoom(rec, tpl, { startAt, delay: room.delay || 0, light: room.light }, cancelled, found => {
+    if (!cal.rec) {
+      note.textContent = 'Abriendo el micrófono…';
+      cal.before = state.music;
+      cal.rec = await startMic();
+      if (cal.cancelled) return;
+      cal.tpl = chirpTemplate(cal.rec.rate);
+      cal.awake = await navigator.wakeLock?.request('screen').catch(() => null); // que el móvil no se apague por el camino
+    }
+    for (const d of targets) {
+      if (cal.cancelled) return;
+      const room = state.music.rooms[d.serialno], row = cal.row(d);
+      row.className = 'cal-state';
+      row.textContent = 'Arrancando…';
+      await syncClock();
+      cal.touched = true;
+      cal.startAt = await startCal(d.serialno, cal.startAt, () => cal.cancelled);
+      if (cal.cancelled) return;
+      note.textContent = `Escuchando ${title(d)}…`;
+      const r = await measureRoom(cal.rec, cal.tpl, { startAt: cal.startAt, delay: room.delay || 0, light: room.light }, () => cal.cancelled, found => {
         const ok = found.filter(Boolean);
-        row(d).textContent = ok.length ? `Oído ${ok.length} ${ok.length === 1 ? 'vez' : 'veces'}: ${ms(ok[ok.length - 1].err)}`
+        row.textContent = ok.length ? `Oído ${ok.length} ${ok.length === 1 ? 'vez' : 'veces'}: ${ms(ok[ok.length - 1].err)}`
           : `Escuchando… (sin oírlo ${found.length} ${found.length === 1 ? 'vez' : 'veces'})`;
       });
-      results.push({ d, delay: room.delay || 0, ...r });
-      row(d).textContent = r ? `Medido` : 'No se oye bien: acércalo al micrófono o súbele el volumen';
-      row(d).className = `cal-state ${r ? '' : 'bad'}`;
+      if (cal.cancelled) return;
+      if (r) cal.results.set(d.serialno, { d, delay: room.delay || 0, ...r });
+      else {
+        cal.results.delete(d.serialno);
+        row.textContent = 'No se oye bien: acércate o súbele el volumen, y «Medir» otra vez';
+        row.className = 'cal-state bad';
+      }
     }
+    const { now } = await api('/music');
+    if (now.song === CAL && now.playing && !cal.cancelled) await post('/music/toggle');
   } finally {
-    rec.stop();
-    await restoreMusic(before).catch(e => toast(e.message, 'error'));
+    cal.busy = false;
+    if (!cal.cancelled) {
+      calButtons(cal);
+      showProposal(cal);
+    }
   }
-  if (cancelled()) return;
-  showCalibration(results.filter(r => r.err != null), list, row);
+}
+
+function calButtons(cal) {
+  for (const btn of $('#dialog').querySelectorAll('[data-measure], #cal-all')) btn.disabled = cal.busy;
+  $('#cal-apply').disabled = cal.busy || cal.results.size < 2;
+}
+
+// Al cerrar: suelta el micrófono y, cuando acabe lo que estuviera midiendo, deja la música como estaba
+async function endCalibration(cal) {
+  await cal.running;
+  if (!cal.rec) return;
+  cal.rec.stop();
+  cal.awake?.release().catch(() => {});
+  if (cal.touched) await restoreMusic(cal.before).catch(e => toast(e.message, 'error'));
 }
 
 const ms = v => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Math.round(v))} ms`;
+const num = v => String(v).replace('-', '−');
 
 // Como estaba: los encendidos y silenciados, y la canción por donde iba (o parada, si no había)
 async function restoreMusic(before) {
@@ -1449,29 +1540,23 @@ async function restoreMusic(before) {
 }
 
 // Lo que se oye de cada uno respecto a la mediana, y el retraso que lo cuadra: el que se oye tarde se adelanta y al revés
-function showCalibration(results, list, row) {
-  if (results.length < 2) {
-    $('#cal-note').textContent = 'No se han podido medir al menos dos: no se cambia nada.';
-    return;
-  }
+function proposal(cal) {
+  const results = [...cal.results.values()];
   const target = middle(results.map(r => r.delay + r.err));
+  return results.map(r => ({ ...r, late: r.delay + r.err - target, next: Math.max(-1000, Math.min(1000, Math.round(target - r.err))) }));
+}
+
+function showProposal(cal) {
+  const results = proposal(cal);
   for (const r of results) {
-    r.late = r.delay + r.err - target;
-    r.next = Math.max(-1000, Math.min(1000, Math.round(target - r.err)));
-    row(r.d).innerHTML = `Se oye ${Math.abs(r.late) < 2 ? 'a la par' : `${ms(r.late)} ${r.late > 0 ? '(tarde)' : '(pronto)'}`}`
-      + ` · retraso ${r.delay} → <strong>${r.next}</strong> ms`;
+    cal.row(r.d).className = 'cal-state';
+    cal.row(r.d).innerHTML = results.length < 2 ? 'Medido; falta otro para compararlo'
+      : `Se oye ${Math.abs(r.late) < 2 ? 'a la par' : `${ms(r.late)} ${r.late > 0 ? '(tarde)' : '(pronto)'}`}`
+        + ` · retraso ${num(r.delay)} → <strong>${num(r.next)}</strong> ms`;
   }
-  $('#cal-note').textContent = 'Medido desde el micrófono. «Aplicar» pone esos retrasos; la prueba de sincronía sirve para comprobarlo de oído.';
-  const go = $('#cal-go');
-  go.textContent = 'Aplicar';
-  go.disabled = false;
-  $('#cal-close').textContent = 'Cerrar';
-  go.onclick = () => busy(go, async () => {
-    for (const r of results) await post('/music/room', { id: r.d.serialno, delay: r.next });
-    $('#dialog').close();
-    toast('Retrasos puestos');
-    await refreshMusic();
-  });
+  $('#cal-note').textContent = results.length >= 2 ? 'Medido desde el micrófono. «Aplicar» pone esos retrasos; puedes volver a medir cualquiera antes.'
+    : results.length ? 'Ahora otro: ponte junto al siguiente altavoz y pulsa su «Medir».'
+    : 'Pulsa «Medir» junto a un altavoz, o «Medir todos» desde donde escuchas.';
 }
 
 // El volumen de cada móvil (lo que diga el propio móvil, también si lo cambian con sus botones)
