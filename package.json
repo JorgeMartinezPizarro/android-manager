@@ -1,5 +1,5 @@
 {
-  "name": "panel-android",
+  "name": "android-mixer",
   "private": true,
   "description": "Panel web para gestionar las apps de los Android de casa con adb",
   "scripts": {

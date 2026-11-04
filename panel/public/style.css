@@ -811,6 +811,7 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
 @media (max-width: 640px) {
   /* Con el filtro de cristal, la barra fija de abajo se quedaría encerrada en la cabecera: aquí, el cristal sin desenfoque */
   .top { backdrop-filter: none; background: linear-gradient(var(--glass), var(--glass)), var(--bg); }
+  .brand { font-size: 16px; gap: 8px; } /* el nombre, que aquí arriba ya solo queda él: las pestañas van abajo */
   .theme-menu { margin-left: auto; }
   #theme-name { display: none; }
   nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;

@@ -7,7 +7,7 @@ const { pipeline } = require('node:stream/promises');
 const { readApkInfo } = require('./apkinfo');
 const cfg = require('./config');
 
-const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Mis Android)', 'Accept-Language': 'es' };
+const HEADERS = { 'User-Agent': 'Mozilla/5.0 (Android Mixer)', 'Accept-Language': 'es' };
 const get = (url, ms = 20000) => fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(ms) });
 const decode = s => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;|&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 

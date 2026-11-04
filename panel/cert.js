@@ -42,12 +42,12 @@ const time = d => der(0x17, Buffer.from(d.toISOString().replace(/[-:T]/g, '').sl
 
 const ECDSA_SHA256 = '1.2.840.10045.4.3.2';
 
-// Un certificado de servidor (no de autoridad) a nombre de «Mis Android», válido para esos nombres e IP
+// Un certificado de servidor (no de autoridad) a nombre de «Android Mixer», válido para esos nombres e IP
 function make(names, ips) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const serial = crypto.randomBytes(16);
   serial[0] &= 0x7f;
-  const who = seq(der(0x31, seq(oid('2.5.4.3'), der(0x0c, Buffer.from('Mis Android (panel)')))));
+  const who = seq(der(0x31, seq(oid('2.5.4.3'), der(0x0c, Buffer.from('Android Mixer (panel)')))));
   const from = new Date(Date.now() - 86400000), to = new Date(Date.now() + DAYS * 86400000);
   const alt = seq(...names.map(n => der(0x82, Buffer.from(n))), ...ips.map(ip => der(0x87, Buffer.from(ip.split('.').map(Number)))));
   const tbs = seq(

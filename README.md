@@ -1,25 +1,26 @@
-# Mis Android
+# Android Mixer
 
 Panel web para ver y gestionar las apps de los móviles Android de casa desde el PC. Habla con ellos
 por adb, igual que `droids.sh`, y usa los mismos ficheros, así que puedes usar uno u otro.
 
 ## Instalar en Windows
 
-`MisAndroid-Setup.exe` lo instala todo de una vez. Lleva dentro sus propias copias de Node.js, adb y scrcpy, así que no
+`AndroidMixer-Setup.exe` lo instala todo de una vez. Lleva dentro sus propias copias de Node.js, adb y scrcpy, así que no
 depende de lo que tenga el PC (ni de nvm) ni hay que instalar nada antes. Se instala para tu usuario, sin permisos de
-administrador, en `%LOCALAPPDATA%\Programs\Mis Android`. Crea «Mis Android» en el menú Inicio y, si quieres, en el
+administrador, en `%LOCALAPPDATA%\Programs\Android Mixer`. Crea «Android Mixer» en el menú Inicio y, si quieres, en el
 escritorio, y puede arrancar el panel solo al entrar en Windows (en una ventana minimizada, sin abrir el navegador).
 
 - Como no está firmado, Windows avisa con «Windows protegió tu PC»: «Más información» → «Ejecutar de todas formas».
-- Para actualizar, instala la versión nueva encima: para el panel si está en marcha y conserva tus datos.
-- Se quita desde Configuración → Aplicaciones → Mis Android. Para el panel y pregunta si borra también tus datos.
+- Para actualizar, instala la versión nueva encima: para el panel si está en marcha y conserva tus datos. Si lo tenías
+  con el nombre de antes (Mis Android), sigue en esa carpeta y solo cambian sus accesos directos.
+- Se quita desde Configuración → Aplicaciones → Android Mixer. Para el panel y pregunta si borra también tus datos.
 - Si en ese PC hay otro adb de otra versión en marcha (el de Android Studio, por ejemplo), cada uno reinicia el del
   otro y se caen las conexiones por wifi: usa uno solo.
 
 **Hacer el instalador** (desde el código): `npm run instalador`. Necesita [Inno Setup](https://jrsoftware.org/isinfo.php)
 (`winget install JRSoftware.InnoSetup`). La primera vez descarga Node.js y scrcpy, que trae adb, de sus páginas oficiales.
 Las versiones son fijas, están en `instalador/construir.js` y se comprueban con su SHA-256. Deja
-`instalador/salida/MisAndroid-Setup.exe` (unos 33 MB): pásalo por USB o por la nube, o súbelo a las Releases de GitHub.
+`instalador/salida/AndroidMixer-Setup.exe` (unos 33 MB): pásalo por USB o por la nube, o súbelo a las Releases de GitHub.
 
 ## Arrancar desde el código
 
@@ -213,7 +214,7 @@ Consejo: reserva en el router una IP fija para cada móvil.
 
 Todo lo tuyo está en la carpeta `datos/`, que git no ve: en una copia nueva del proyecto (la de un amigo, por ejemplo)
 el panel arranca vacío y la va llenando. Con el instalador, `datos\` está en la carpeta donde se instaló
-(`%LOCALAPPDATA%\Programs\Mis Android\datos`). Para llevarte tu configuración a otro PC, copia `datos/` entera, con el panel
+(`%LOCALAPPDATA%\Programs\Android Mixer\datos`). Para llevarte tu configuración a otro PC, copia `datos/` entera, con el panel
 cerrado. Las versiones anteriores guardaban estos ficheros junto al proyecto; el panel los mueve a `datos/` al arrancar.
 
 | Fichero en `datos/` | Para qué |

@@ -3,9 +3,9 @@ chcp 65001 >nul
 rem Doble clic: arranca el panel y lo abre en el navegador. Cierra esta ventana para pararlo.
 rem Si ya estaba en marcha (por ejemplo, porque arranca solo con Windows), solo lo abre en el navegador.
 rem Con /fondo (el arranque con Windows, en una ventana minimizada) no abre el navegador.
-rem Instalado con MisAndroid-Setup.exe usa sus propias copias de Node.js, adb y scrcpy (vendor\), no las que tenga el
+rem Instalado con AndroidMixer-Setup.exe usa sus propias copias de Node.js, adb y scrcpy (vendor\), no las que tenga el
 rem sistema; en una copia del código, sin vendor\, las del sistema.
-title Mis Android
+title Android Mixer
 cd /d "%~dp0"
 set "NODE=node"
 if exist "vendor\node\node.exe" set "NODE=%~dp0vendor\node\node.exe"
@@ -20,7 +20,7 @@ if errorlevel 1 pause
 exit /b
 
 :sin_node
-echo Falta Node.js 22 o más nuevo. Instala Mis Android con MisAndroid-Setup.exe, que lo lleva dentro, o instala
+echo Falta Node.js 22 o más nuevo. Instala Android Mixer con AndroidMixer-Setup.exe, que lo lleva dentro, o instala
 echo Node.js desde https://nodejs.org
 pause
 exit /b 1

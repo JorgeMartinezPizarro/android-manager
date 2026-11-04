@@ -1,6 +1,6 @@
 // construir.js — hace el instalador de Windows (npm run instalador): descarga Node.js y scrcpy (que trae adb) en
-// instalador\vendor\, comprueba que son los oficiales, dibuja el icono y compila mis-android.iss con Inno Setup
-// (winget install JRSoftware.InnoSetup). Sale instalador\salida\MisAndroid-Setup.exe. Lo descargado se queda: la
+// instalador\vendor\, comprueba que son los oficiales, dibuja el icono y compila android-mixer.iss con Inno Setup
+// (winget install JRSoftware.InnoSetup). Sale instalador\salida\AndroidMixer-Setup.exe. Lo descargado se queda: la
 // próxima vez solo compila
 'use strict';
 const crypto = require('node:crypto');
@@ -80,14 +80,15 @@ async function main() {
   await provide('node', NODE, (data, dir) => fs.writeFileSync(path.join(dir, 'node.exe'), data));
   await provide('scrcpy', SCRCPY, unzipFlat);
   // El icono va dentro del .exe (y lo copia al instalar, para los accesos directos): en salida solo queda el instalador
-  fs.writeFileSync(path.join(VENDOR, 'mis-android.ico'), ico());
+  fs.writeFileSync(path.join(VENDOR, 'android-mixer.ico'), ico());
   fs.mkdirSync(SALIDA, { recursive: true });
-  fs.rmSync(path.join(SALIDA, 'mis-android.ico'), { force: true });
+  // Lo que dejaron las versiones con el nombre de antes
+  for (const old of [path.join(SALIDA, 'mis-android.ico'), path.join(SALIDA, 'MisAndroid-Setup.exe'), path.join(VENDOR, 'mis-android.ico')]) fs.rmSync(old, { force: true });
   // La versión es la fecha: 2026.11.2, y para Windows con la hora detrás (2026.11.2.1530)
   const d = new Date(), version = `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
   execFileSync(iscc(), ['/Qp', `/DVersion=${version}`, `/DVersionInfo=${version}.${d.getHours() * 100 + d.getMinutes()}`,
-    path.join(__dirname, 'mis-android.iss')], { stdio: 'inherit' });
-  const exe = path.join(SALIDA, 'MisAndroid-Setup.exe');
+    path.join(__dirname, 'android-mixer.iss')], { stdio: 'inherit' });
+  const exe = path.join(SALIDA, 'AndroidMixer-Setup.exe');
   console.log(`\nListo: ${exe} (${Math.round(fs.statSync(exe).size / 1e6)} MB, versión ${version})`);
 }
 

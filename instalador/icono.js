@@ -1,4 +1,4 @@
-// icono.js — el icono de Mis Android: un móvil con una nota musical, en blanco sobre un cuadrado verde redondeado. Se
+// icono.js — el icono de Android Mixer: un móvil con una nota musical, en blanco sobre un cuadrado verde redondeado. Se
 // dibuja aquí, para no guardar binarios en git; sale un .ico con varios tamaños, cada uno en PNG
 'use strict';
 const zlib = require('node:zlib');
