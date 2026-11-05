@@ -260,6 +260,7 @@ dialog menu a.btn { text-decoration: none; }
 .vol-val { display: inline-block; min-width: 3.6em; margin-left: 12px; font-variant-numeric: tabular-nums; }
 .btn.small.icon { padding: 4px 6px; }
 .btn.mute { margin-right: 8px; }
+.more-btn, .sp-more, .stop-ico { display: none; } /* desplegables e icono de parar: solo en el móvil */
 .btn.screen-mode.headless { background: var(--accent-weak); border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent-text); }
 .btn.mute.off { background: var(--warn-weak); border-color: color-mix(in srgb, var(--warn) 45%, transparent); color: var(--warn); }
 .speakers tr.silenced .app-name { opacity: .55; }
@@ -847,20 +848,25 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
    columna de un móvil, una etiqueta con su nombre (data-label). Así no se corta nada ni hay que deslizar de lado */
 .nav-ico { display: none; }
 @media (max-width: 640px) {
+  /* La página no se desplaza, solo lo que hay dentro de main. Si se desplazara, Chrome escondería y sacaría sus barras en el
+     móvil, y el menú de abajo saltaría con ellas */
+  :root { --nav-h: 52px; }
+  html { overflow: hidden; }
+  body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; min-height: 0; padding-bottom: var(--nav-h); overflow: hidden; }
   /* Con el filtro de cristal, la barra fija de abajo se quedaría encerrada en la cabecera: aquí, el cristal sin desenfoque */
-  .top { backdrop-filter: none; background: linear-gradient(var(--glass), var(--glass)), var(--bg); }
+  .top { flex: none; padding-top: 6px; padding-bottom: 6px; backdrop-filter: none; background: linear-gradient(var(--glass), var(--glass)), var(--bg); }
   .brand { font-size: 16px; gap: 8px; } /* el nombre, que aquí arriba ya solo queda él: las pestañas van abajo */
   .theme-menu { margin-left: auto; }
   #theme-name { display: none; }
   nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
-    padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); overflow: visible;
+    height: var(--nav-h); padding: 4px 8px; overflow: visible;
     background: linear-gradient(var(--glass), var(--glass)), var(--bg); border-top: 1px solid var(--border); }
-  nav a { flex-direction: column; justify-content: center; gap: 2px; padding: 6px 2px; border-radius: 14px; font-size: 11.5px; }
+  nav a { flex-direction: column; justify-content: center; gap: 1px; padding: 4px 2px; border-radius: 12px; font-size: 11px; line-height: 1.3; }
   nav a.active::before { display: none; }
   :root[data-theme="fosforo"] nav a { font-size: 10.5px; }
-  .nav-ico { display: block; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-  main { padding: 20px 14px calc(96px + env(safe-area-inset-bottom)); }
-  #toasts { left: 12px; right: 12px; bottom: calc(80px + env(safe-area-inset-bottom)); max-width: none; }
+  .nav-ico { display: block; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  main { flex: 1; width: 100%; min-height: 0; margin: 0; padding: 14px 14px 12px; overflow-y: auto; overscroll-behavior: contain; }
+  #toasts { left: 12px; right: 12px; bottom: calc(var(--nav-h) + 12px); max-width: none; }
 
   /* Las tablas, en tarjetas */
   .card.flush.scroll-x { overflow: hidden; }
@@ -885,23 +891,76 @@ dialog.wide { width: min(640px, calc(100vw - 32px)); }
   /* Ajustes: el perfil común debajo del nombre, a todo lo ancho */
   .picks { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
   .profile-head .btn { width: 100%; margin-left: 0; }
-  /* Altavoces: nombre y estado arriba, el volumen a todo lo ancho y debajo el retraso y los botones */
-  .speakers .app-cell { flex-basis: 45%; }
-  .speakers .sp-state { flex: none; max-width: 55%; text-align: right; }
-  .speakers .sp-line { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
-  .speakers .sp-wifi { margin-left: 0; }
+  /* Música: todo a la vista en una pantalla. Lo que se usa poco se despliega con su botón, y un altavoz con problemas lo
+     enseña sin desplegar. Con #music, para ganar a lo que cambian los temas */
+  .music-head { display: none; }
+  #music { margin-top: -6px; }
+  #music .more-btn { display: inline-flex; }
+  #music .card.now { padding: 10px 12px; }
+  #music .now-head { display: block; }
+  #music .now-state { max-width: calc(100% - 80px); font-size: 10.5px; line-height: 16px; }
+  #now-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #music .now-title strong { font-size: 16px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+  #now-next, #music .btn-text { display: none; }
+  /* Por dónde va, arriba a la derecha, en la línea del estado */
+  #music .card.now > .times { position: absolute; top: 10px; right: 12px; gap: 4px; margin: 0; min-height: 0; font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; }
+  #now-pos:not(:empty)::after { content: "/"; margin-left: 4px; }
+  /* Los botones del reproductor, solo con su icono y repartidos a lo ancho */
+  #music .now-controls { flex-wrap: nowrap; gap: 6px; margin-top: 8px; }
+  #music .transport { display: contents; }
+  #music .now-controls .btn { flex: 1 1 0; min-width: 0; height: 40px; padding: 0; }
+  #music .stop-ico { display: inline-flex; }
+  #music .now-controls [data-action=previous] { order: 1; }
+  #now-toggle { order: 2; }
+  #music .now-controls [data-action=next] { order: 3; }
+  #music .now-controls [data-action=stop] { order: 4; border-color: var(--border-strong); }
+  #music .now-controls [data-act=songs] { order: 5; }
+  #music .now-controls .more-btn { order: 6; }
+  #music .progress { margin-top: 10px; }
+  #music .progress::before { content: ""; position: absolute; inset: -10px 0; } /* la barra es fina: más fácil de tocar */
+  #music .now-options { gap: 8px 16px; margin-top: 12px; padding-top: 8px; }
+  #music .now:not(.unfolded):not(.timer) .now-options { display: none; }
+  /* Altavoces: «Silenciar todos» a mano y el resto de acciones, desplegables */
+  #music .section-head { flex-wrap: nowrap; align-items: flex-start; margin: 10px 0 4px; }
+  #music .section-head h2 { flex: none; margin-top: 7px; font-size: 12px; }
+  #music .section-head .actions { flex: 1; justify-content: flex-end; gap: 6px; }
+  #music .section-head .btn { padding: 5px 10px; font-size: 13px; }
+  #music .section-head .more-btn { order: 1; padding: 5px 8px; }
+  #music .section-head .btn:not(#all-btn):not(.more-btn) { order: 2; }
+  #music .section-head:not(.unfolded) .btn:not(#all-btn):not(.more-btn) { display: none; }
+  /* Cada altavoz, en dos líneas: su nombre sobre el volumen, entre el botón de silenciar y «Solo». Debajo, si hace falta, su
+     estado y, desplegado, el retraso y los botones */
+  .speakers tr { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto auto auto; gap: 0 8px; padding: 6px 4px 6px 10px; }
+  .speakers .sp-vol { display: contents; }
+  .speakers .mute { grid-area: 1 / 1 / 3 / 2; width: 38px; height: 38px; margin: 0; }
+  .speakers .app-cell { grid-area: 1 / 2 / 2 / 4; }
+  .speakers .app-name { overflow: hidden; font-size: 14px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+  .speakers .vol { grid-area: 2 / 2 / 3 / 3; width: 100%; height: 20px; }
+  .speakers .vol-val { grid-area: 2 / 3 / 3 / 4; min-width: 2.8em; margin: 0; font-size: 12px; text-align: right; }
+  .speakers [data-action=solo] { grid-area: 1 / 4 / 3 / 5; height: 38px; padding: 0 8px; }
+  .speakers .sp-more { display: block; grid-area: 1 / 5 / 3 / 6; }
+  .speakers .more-btn { width: 30px; height: 38px; padding: 0; border-color: transparent; background: none; color: var(--muted); }
+  .speakers .more-btn svg { transition: transform .15s; }
+  .speakers .unfolded .more-btn svg { transform: rotate(180deg); }
+  .speakers tr:not(.unfolded) .app-cell .muted, .speakers tr:not(.unfolded) .sp-delay,
+  .speakers tr:not(.unfolded):not(.trouble) .sp-state, .speakers tr:not(.unfolded):not(.trouble) .row-actions { display: none; }
+  .speakers .sp-state { grid-area: 3 / 2 / 4 / -1; margin-top: 4px; }
+  .speakers .sp-line { flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+  .speakers .sp-clock { margin-left: 0; }
+  .speakers .sp-wifi { margin-left: 0; padding-left: 0; }
   .speakers .sp-state .err-text { width: auto; min-width: 0; }
-  .speakers .sp-vol { order: 1; flex: 1 1 100%; min-width: 0; display: flex; align-items: center; gap: 8px; }
-  .speakers .sp-vol .vol { flex: 1; width: auto; min-width: 0; }
-  .speakers .sp-vol .vol-val { min-width: 3em; margin: 0; text-align: right; }
-  .speakers .nowrap .btn + .btn { margin-left: 0; }
-  .speakers .sp-delay { order: 2; flex: 1 1 auto; display: flex; align-items: center; }
+  .speakers .sp-delay { grid-area: 4 / 1 / 5 / -1; justify-self: start; display: flex; align-items: center; margin-top: 8px; }
   .speakers .delay-val { height: 32px; padding: 0 4px; }
   .speakers .sp-delay::before { content: "Retraso"; margin-right: 8px; font-size: 13px; color: var(--muted); }
-  .speakers .row-actions { order: 3; }
+  .speakers .row-actions { grid-area: 4 / 1 / 5 / -1; justify-self: end; margin-top: 8px; padding-right: 6px; }
   .speakers .row-actions::after { content: none; }
   /* Calibrar: el nombre arriba y, debajo, cómo va la medida y su «Medir» */
   .cal tr { display: grid; grid-template-columns: 1fr; border-top: 1px solid var(--border); padding: 8px 0; }
   .cal td { border: 0; padding: 2px 0; }
   .cal td:first-child { white-space: normal; }
+}
+/* En un móvil muy estrecho, el retraso y los botones no caben en la misma línea */
+@media (max-width: 359px) {
+  .speakers .row-actions { grid-row: 5 / 6; }
+  #all-btn svg { display: none; }
 }

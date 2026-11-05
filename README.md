@@ -216,7 +216,10 @@ Consejo: reserva en el router una IP fija para cada móvil.
   dirección se abre con ese.
 - **En el móvil** (pantallas de hasta 640 px): las pestañas van abajo, como en una app, y las tablas (altavoces,
   favoritas, limpiar, ajustes) pasan a tarjetas, con cada móvil como una etiqueta con su nombre, para que no se corte
-  nada. En el ordenador se ve igual que siempre.
+  nada. La página no se desplaza, solo lo que hay entre la cabecera y las pestañas: así Chrome no mueve sus barras y las
+  pestañas no saltan. En Música cabe todo en una pantalla: el reproductor, con iconos y, de cada altavoz, su nombre, el
+  volumen y «Solo». Lo demás se despliega con sus botones, y un altavoz con problemas lo enseña sin desplegar. En el
+  ordenador se ve igual que siempre.
 
 ## Ficheros
 

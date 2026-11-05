@@ -980,7 +980,14 @@ const mb = (action, label, tip, cls = '') => `<button class="btn ${cls}" data-ac
 // Iconos de trazo, como el de actualizar de la cabecera
 const icon = (paths, size = 16) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2"
   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+// Los del reproductor, rellenos: los símbolos ⏮ ⏸ ⏭ salen como emojis de colores en muchos móviles
+const solid = d => `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="${d}"/></svg>`;
 const ICON = {
+  trackPrev: solid('M6 6h2v12H6zm3.5 6 8.5 6V6z'),
+  trackNext: solid('M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z'),
+  trackPlay: solid('M8 5v14l11-7z'),
+  trackPause: solid('M6 19h4V5H6v14zm8-14v14h4V5h-4z'),
+  trackStop: solid('M6 6h12v12H6z'),
   sound: icon('<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>'),
   muted: icon('<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 6 6m0-6-6 6"/>'),
   look: icon('<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>'),
@@ -989,6 +996,8 @@ const ICON = {
   reload: icon('<path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/>'),
   songs: icon('<path d="M3 6h12M3 11h12M3 16h7"/><path d="M19 17V5l3 1"/><circle cx="16.5" cy="17" r="2.5"/>', 18),
   close: icon('<path d="M6 6l12 12M18 6 6 18"/>', 20),
+  more: icon('<path d="M5 12h.01M12 12h.01M19 12h.01"/>', 18),
+  chevron: icon('<path d="m6 9 6 6 6-6"/>', 18),
   info: icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>', 15),
   control: icon('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>', 18),
   wifi: icon('<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/>', 18),
@@ -1019,7 +1028,7 @@ const SPEAKER_STATE = {
 };
 
 async function viewMusic(current) {
-  view.innerHTML = `<div class="page-head"><h1>Música</h1>
+  view.innerHTML = `<div class="page-head music-head"><h1>Música</h1>
       <p class="muted">Tus canciones sonando a la vez en los móviles que elijas. Cada móvil hace de altavoz con una página que abre en Chrome.</p></div>
     <section id="music">${loading('Buscando móviles…')}</section>
     <dialog id="songs-dlg" class="full" aria-labelledby="songs-title">
@@ -1044,20 +1053,27 @@ async function viewMusic(current) {
   await state.reload();
 }
 
+// En el móvil, lo que se usa poco va plegado. Se recuerda lo que está desplegado para cuando la vista se rehaga
+const opened = new Set();
+const foldable = key => `foldable${opened.has(key) ? ' unfolded' : ''}`;
+const moreBtn = (key, label, ic = ICON.more) => `<button class="btn icon more-btn" data-act="more" data-more="${esc(key)}"
+  title="${esc(label)}" aria-label="${esc(label)}" aria-expanded="${opened.has(key)}">${ic}</button>`;
+
 function renderMusic() {
   const devices = state.devices.filter(isReady);
   $('#music').innerHTML = `
-    <div class="card now">
+    <div class="card now ${foldable('now')}">
       <div class="now-head">
         <div class="now-title"><span class="muted now-state"><span class="eq" aria-hidden="true"><i></i><i></i><i></i></span><span id="now-state"></span></span><strong id="now-song"></strong><span class="muted small" id="now-next"></span></div>
         <div class="now-controls">
-          <button class="btn" data-act="songs" title="Elegir qué suena">${ICON.songs}Canciones</button>
+          <button class="btn" data-act="songs" title="Elegir qué suena" aria-label="Canciones">${ICON.songs}<span class="btn-text">Canciones</span></button>
           <div class="transport">
-            ${mb('previous', '⏮', 'Anterior; si ya lleva unos segundos, vuelve al principio')}
+            ${mb('previous', ICON.trackPrev, 'Anterior; si ya lleva unos segundos, vuelve al principio')}
             <button class="btn primary" id="now-toggle" data-act="music" data-action="toggle"></button>
-            ${mb('next', '⏭', 'Siguiente')}
-            ${mb('stop', 'Parar', 'Para la música en todos los altavoces', 'ghost')}
+            ${mb('next', ICON.trackNext, 'Siguiente')}
+            ${mb('stop', `<span class="stop-ico">${ICON.trackStop}</span><span class="btn-text">Parar</span>`, 'Para la música en todos los altavoces', 'ghost')}
           </div>
+          ${moreBtn('now', 'Más opciones')}
         </div>
       </div>
       <div class="progress" data-act="seek" title="Pulsa para saltar a ese punto de la canción"><i id="now-bar"></i></div>
@@ -1073,9 +1089,10 @@ function renderMusic() {
         <span class="muted small" id="sleep-at"></span>
       </div>
     </div>
-    <div class="section-head"><h2>Altavoces</h2>
+    <div class="section-head ${foldable('speakers')}"><h2>Altavoces</h2>
       <div class="actions">
         <button class="btn" id="all-btn" data-act="music" data-action="none"></button>
+        ${moreBtn('speakers', 'Más acciones')}
         <button class="btn" data-act="calibrate" title="Mide con el micrófono de ${HERE} cuándo se oye cada altavoz encendido y les pone el retraso que los cuadra">${ICON.mic}Calibrar</button>
         <button class="btn" data-act="speaker-all" title="Abre la página de altavoz en todos los móviles conectados">Abrir en todos</button>
         <button class="btn" data-act="screen-all" title="Abre en este PC la pantalla de cada móvil, para verlas y manejarlas a la vez">Mostrar todos</button>
@@ -1112,7 +1129,7 @@ function filterSongs() {
 
 function speakerRow(d) {
   const tip = 'Si este móvil se oye antes que los demás, súbelo; si se oye después, bájalo';
-  return `<tr data-serial="${esc(d.serial)}" data-id="${esc(d.serialno)}">
+  return `<tr class="${foldable(d.serialno)}" data-serial="${esc(d.serial)}" data-id="${esc(d.serialno)}">
     <td class="app-cell"><div class="app-name">${esc(title(d))}</div>${d.name ? `<div class="muted small">${esc(model(d))}</div>` : ''}</td>
     <td class="sp-state"></td>
     <td class="nowrap sp-vol"><button class="btn small icon mute" data-act="mute"></button><input type="range" class="vol" min="0" max="100" step="1"
@@ -1125,6 +1142,7 @@ function speakerRow(d) {
     <td class="row-actions"><button class="btn small icon screen-mode" data-act="screen-mode"></button><button class="btn small icon" data-act="screen" aria-label="Ver pantalla"
       title="Ver pantalla: verla y manejarla desde el PC, para desbloquearlo o tocar «Toca para activar el altavoz»">${ICON.look}</button><button
       class="btn small" data-act="speaker-open"></button></td>
+    <td class="sp-more">${moreBtn(d.serialno, `Más de ${title(d)}`, ICON.chevron)}</td>
   </tr>`;
 }
 
@@ -1135,7 +1153,12 @@ function updateMusic() {
   $('#now-song').textContent = now.song ? now.name : 'Nada sonando';
   $('#now-next').textContent = now.song && now.next ? `Después: ${now.next}` : '';
   $('#now-state').textContent = !now.song ? 'Elige una canción en «Canciones»' : now.waiting ? 'Preparando los altavoces…' : now.playing ? 'Sonando' : 'En pausa';
-  $('#now-toggle').textContent = now.playing ? '⏸ Pausa' : now.song ? '▶ Seguir' : '▶ Reproducir';
+  const toggle = $('#now-toggle'), toggleLabel = now.playing ? 'Pausa' : now.song ? 'Seguir' : 'Reproducir';
+  if (toggle.getAttribute('aria-label') !== toggleLabel) {
+    toggle.setAttribute('aria-label', toggleLabel);
+    toggle.title = toggleLabel;
+    toggle.innerHTML = `${now.playing ? ICON.trackPause : ICON.trackPlay}<span class="btn-text">${toggleLabel}</span>`;
+  }
   $('#now-pos').textContent = now.song ? mmss(now.position) : '';
   $('#now-dur').textContent = now.song ? mmss(now.duration) : '';
   $('#now-bar').style.width = now.song && now.duration ? `${Math.min(100, now.position / now.duration * 100)}%` : '0';
@@ -1151,6 +1174,7 @@ function updateMusic() {
   if (document.activeElement !== $('#shuffle')) $('#shuffle').checked = now.shuffle;
   if (document.activeElement !== $('#sleep') && !now.stopAt) $('#sleep').value = '0';
   $('#sleep-at').textContent = now.stopAt ? `Se pausa a las ${time(now.stopAt)}` : '';
+  $('.card.now').classList.toggle('timer', Boolean(now.stopAt)); // en el móvil, un temporizador en marcha no va plegado
 
   for (const tr of document.querySelectorAll('#music tr[data-id]')) {
     const room = rooms[tr.dataset.id];
@@ -1198,6 +1222,8 @@ function updateMusic() {
       mute.setAttribute('aria-label', on ? 'Silenciar' : 'Que suene');
     }
     tr.classList.toggle('silenced', !on);
+    // En el móvil, el estado y los botones de la fila solo se ven sin desplegar si hay algo que hacer en ese altavoz
+    tr.classList.toggle('trouble', Boolean(!room?.linked || room.deaf || room.phase === 'tap' || room.error));
     const delayInput = tr.querySelector('.delay-val');
     if (document.activeElement !== delayInput) delayInput.value = room?.delay || 0;
     // Si ya funciona, el botón la recarga (por si algo va raro); si no, la abre
@@ -1951,6 +1977,13 @@ const actions = {
     await refreshMusic();
   }),
   mute: btn => busy(btn, () => toggleMute(btn)),
+  more: btn => {
+    const key = btn.dataset.more, open = !opened.has(key);
+    if (open) opened.add(key);
+    else opened.delete(key);
+    btn.closest('.foldable').classList.toggle('unfolded', open);
+    btn.setAttribute('aria-expanded', open);
+  },
   'screen-mode': btn => busy(btn, async () => {
     const id = ctx(btn, 'id'), screen = state.music.rooms[id]?.screen !== false;
     await post('/music/room', { id, serial: ctx(btn, 'serial'), screen: !screen });
