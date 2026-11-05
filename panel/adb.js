@@ -2,6 +2,7 @@
 'use strict';
 const { execFile, spawn } = require('node:child_process');
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -104,6 +105,9 @@ async function info(serial) {
 
 // Solo los números de serie de lo que adb tiene conectado, sin preguntar nada a los móviles
 const serials = async () => (await run(['devices'])).split('\n').slice(1).map(line => line.split(/\s+/)[0]).filter(Boolean);
+// Los mismos, solo los que responden
+const online = async () => (await run(['devices'])).split('\n').slice(1).map(line => line.trim().split(/\s+/))
+  .filter(([, state]) => state === 'device').map(([serial]) => serial);
 // El número de serie del propio móvil: el mismo por cable que por wifi
 const serialno = async serial => (await shell(serial, 'getprop ro.serialno')).trim();
 
@@ -217,7 +221,8 @@ const table = text => Object.fromEntries(text.split('\n').map(l => l.match(/^([\
 async function readSettings(serial) {
   const sdk = await sdkOf(serial);
   const [night = '', system = '', global = ''] = (await shell(serial, sdk < 23 ? OLD_SETTINGS : SETTINGS)).split('@@\n');
-  return { sdk, night: night.match(/Night mode: (\w+)/)?.[1], system: table(system), global: table(global) };
+  const guard = GUARD_SDK.includes(sdk) ? (await guardOn(serial) ? '1' : '0') : undefined;
+  return { sdk, night: night.match(/Night mode: (\w+)/)?.[1], system: table(system), global: table(global), guard };
 }
 
 // Solo estas órdenes, con valores sencillos: los ajustes no pueden colar nada más en el móvil
@@ -575,14 +580,24 @@ async function touch(serial, { x, y, x2 = x, y2 = y }) {
   }
 }
 
+const portOpen = (host, port) => new Promise(done => {
+  const socket = net.connect({ host, port, timeout: 3000 });
+  const end = open => { socket.destroy(); done(open); };
+  socket.once('connect', () => end(true));
+  socket.once('error', () => end(false));
+  socket.once('timeout', () => end(false));
+});
+
 async function connect(host) {
   const target = host.includes(':') ? host : `${host}:5555`;
   const out = lastLine(await run(['connect', target], { timeout: 15000 }).catch(e => e.message));
   if (/connected to/.test(out)) return out;
-  // El modo wifi del 5555 se pierde al reiniciar el móvil; solo se recupera desde el cable
-  throw new Error(target.endsWith(':5555')
-    ? `No responde en ${target}. Si el móvil se ha reiniciado, enchúfalo por cable y pulsa «Pasar a Wi-Fi».`
-    : out || 'No se pudo conectar');
+  if (!target.endsWith(':5555')) throw new Error(out || 'No se pudo conectar');
+  // Con el puerto abierto, el móvil sigue en modo wifi y el cable no hace falta. Ese modo se pierde al reiniciar el móvil, y
+  // entonces solo se recupera desde el cable
+  throw new Error(await portOpen(target.slice(0, -5), 5555)
+    ? `${target} sigue en modo wifi, así que no hace falta el cable: su depuración se ha atascado. En el móvil, apaga y enciende «Depuración USB» en Opciones de desarrollador. En Android 7, el panel lo hace solo en unos minutos.`
+    : `No responde en ${target}. Mira que tenga encendida la «Depuración USB». Si el móvil se ha reiniciado, enchúfalo por cable y pulsa «Pasar a Wi-Fi».`);
 }
 
 const disconnect = async serial => lastLine(await run(['disconnect', serial]));
@@ -592,6 +607,37 @@ const disconnect = async serial => lastLine(await run(['disconnect', serial]));
 async function reconnect(serial) {
   await run(['disconnect', serial]).catch(() => {});
   return connect(serial);
+}
+
+// ── El vigilante de la depuración (Android 7) ──
+
+// Android 7 atiende una sola conexión de adb a la vez. Si la red se corta, el móvil puede seguir creyendo viva la que había y
+// dejar esperando a las nuevas: se queda «offline» hasta que alguien apaga y enciende la depuración, y un móvil puede estar en
+// lo alto de un armario. Este script se queda en el móvil, sin instalar nada, hasta que este se reinicie, y lo hace él: si una
+// conexión al puerto 5555 (15B3) tiene lo mismo sin leer en tres vueltas seguidas, unos 2 minutos, es que nadie la atiende.
+// Solo en Android 7: en Android 9 se ha visto que Android mata el script al apagar la depuración, y esta se queda apagada
+const GUARD_SDK = [24, 25];
+const GUARD_PID = '/data/local/tmp/android-mixer-adb.pid';
+const GUARD_SCRIPT = [
+  `echo $$ > ${GUARD_PID}`,
+  'seen=""; older=""',
+  'while :; do sleep 60',
+  'now=$(cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | while read -r n l r st q rest; do case "$l" in *:15B3) case "$st" in 01|08) case "$q" in *:00000000) ;; *) echo "$r-$q" ;; esac ;; esac ;; esac; done)',
+  'stuck=""; for t in $now; do case " $seen " in *" $t "*) case " $older " in *" $t "*) stuck=1 ;; esac ;; esac; done',
+  'older=$seen; seen=$(echo $now)',
+  'if [ -n "$stuck" ]; then settings put global adb_enabled 0; sleep 4; settings put global adb_enabled 1; seen=""; older=""; sleep 240; fi',
+  'done',
+].join('; ');
+
+const guardOn = async serial => /\bon\b/.test(await shell(serial,
+  `p=$(cat ${GUARD_PID} 2>/dev/null); [ -n "$p" ] && grep -q android-mixer-adb /proc/$p/cmdline 2>/dev/null && echo on || echo off`));
+
+async function setGuard(serial, on) {
+  if (on === await guardOn(serial)) return;
+  if (on) {
+    await shell(serial, `setsid sh -c '${GUARD_SCRIPT}' </dev/null >/dev/null 2>&1 &`);
+    await sleep(800); // lo que tarda en apuntar su número de proceso
+  } else await shell(serial, `kill $(cat ${GUARD_PID}); rm -f ${GUARD_PID}`);
 }
 
 async function pair(host, code) {
@@ -648,6 +694,6 @@ async function enableWifi(serial) {
 }
 
 module.exports = {
-  PKG, adbPath, sdkOf, startServer, serials, serialno, devices, apps, appAction, versions, install, openStore, pullApk, awake,
+  PKG, adbPath, sdkOf, startServer, serials, online, serialno, devices, GUARD_SDK, setGuard, apps, appAction, versions, install, openStore, pullApk, awake,
   readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, touch, reverse, wifiIp, openSpeaker, closeOldSpeakerTabs, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
 };

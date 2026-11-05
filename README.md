@@ -57,7 +57,9 @@ No toca tus ficheros.
      «Permitir siempre». En el panel, «Pasar a Wi-Fi» y ya puedes quitar el cable. La IP se guarda en
      `datos/devices.txt` y el panel la reconecta al arrancar y, si se cae (por ejemplo, porque adb se ha reiniciado), al cabo
      de un minuto. Si lo quitas con «Desconectar», no vuelve hasta que pulses «Reconectar». Este modo se pierde si el
-     móvil se reinicia.
+     móvil se reinicia. Un corte de red no lo quita: si tras un corte un móvil sale «offline» con el puerto abierto, basta
+     con apagar y encender su «Depuración USB», sin cable. En Android 7, donde pasa, el panel lo hace solo en unos minutos
+     (mira **Ajustes**).
 
 3. **OPPO, realme, OnePlus y Xiaomi** no dejan a adb cambiar ajustes ni pulsar teclas hasta activar en Opciones de
    desarrollador «Desactivar supervisión de permisos» (OPPO, realme, OnePlus) o «Depuración USB (ajustes de
@@ -172,7 +174,7 @@ Consejo: reserva en el router una IP fija para cada móvil.
     abierto. Un paso sin ningún móvil compartido se compara como si hubieras medido a la misma distancia, y «Deshacer el
     último paso» lo quita. El móvil pone su reloj en hora con el del PC antes de cada medida y no se apaga mientras el diálogo
     está abierto. Con dos o más medidos enseña cuánto se oye cada uno respecto al resto y los retrasos que los cuadran
-    («Aplicar» los pone); al cerrar, la música vuelve por donde iba. Unos 10 s por altavoz; el que va en modo ligero, hasta 45 s, porque tarda más en cuadrarse al arrancar. El
+    («Aplicar» los pone); al cerrar, la música vuelve por donde iba. Unos 10 s por altavoz; hasta 45 s en el modo ligero y en los móviles que tardan más en cuadrarse al arrancar. El
     navegador pide permiso para el micrófono, y solo lo da en páginas seguras: en el PC (localhost) o por https, que es
     como se abre el panel desde otro aparato.
   - La página del altavoz ocupa toda la pantalla de cada móvil y hace de mando: arriba la canción (en una línea: si no
@@ -200,7 +202,10 @@ Consejo: reserva en el router una IP fija para cada móvil.
     por la wifi de casa, a la IP del PC. Ahí Chrome no deja mantener la pantalla encendida, así que déjalos enchufados
     con «Pantalla encendida mientras carga» (en Ajustes).
 - **Ajustes**: un perfil común para todos los móviles: modo oscuro, brillo automático, cuándo se apaga la
-  pantalla, tamaño de letra, giro automático, pantalla encendida mientras carga y animaciones.
+  pantalla, tamaño de letra, giro automático, pantalla encendida mientras carga y animaciones. **Recuperar la depuración**
+  solo sale en Android 7 y viene en «Sí»: al conectar, el panel deja en el móvil un pequeño script, sin
+  instalar nada, que apaga y enciende la depuración si una conexión de adb lleva unos 2 minutos sin que nadie la atienda. Dura hasta que el
+  móvil se reinicia.
   Arriba está el formulario para todos; lo que dejes en «No tocar» no se cambia. Debajo, cada móvil tiene su ficha con
   la lista de sus ajustes: verde si ya está como debe, naranja si falta cambiarlo y «—» si su Android no lo tiene (el
   modo oscuro necesita Android 10). También funcionan en Android 4.2; en 4.1 o anterior no se pueden cambiar.

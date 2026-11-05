@@ -529,10 +529,12 @@ async function watchHeadless() {
   }
 }
 
-// adb pierde el puerto de un móvil cuando este se desconecta o adb se reinicia: se le vuelve a abrir mientras no esté conectado
+// adb pierde el puerto de un móvil cuando este se desconecta o adb se reinicia, y otro panel puede quedárselo y llevárselo al
+// desconectarse. La página no sirve para notarlo: lo que ya tenía abierto sigue funcionando y solo falla lo nuevo («Failed
+// to fetch»). Por eso se vuelve a abrir siempre, también con la página conectada: si ya está abierto, no cambia nada
 function keepPorts() {
-  for (const [id, room] of Object.entries(rooms)) {
-    if (room.serial && !room.lan && !linked(speaker(id))) adb.reverse(room.serial, PORT).catch(() => {});
+  for (const room of Object.values(rooms)) {
+    if (room.serial && !room.lan) adb.reverse(room.serial, PORT).catch(() => {});
   }
 }
 

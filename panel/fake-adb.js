@@ -274,8 +274,15 @@ function main(args) {
       return out('Success');
     }
     case 'shell': {
-      const p = phoneOf(serial);
-      for (const c of rest.join(' ').split(';')) shell(p, c.trim());
+      const p = phoneOf(serial), script = rest.join(' ');
+      // El vigilante de la depuración: aquí basta con recordar si está en marcha
+      if (script.includes('android-mixer-adb')) {
+        if (script.includes('setsid')) p.guard = true;
+        else if (script.includes('kill ')) p.guard = false;
+        else out(p.guard ? 'on' : 'off');
+        return;
+      }
+      for (const c of script.split(';')) shell(p, c.trim());
       return;
     }
     case 'exec-out': {

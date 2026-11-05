@@ -73,14 +73,24 @@ const SETTINGS = [
     other: v => `×${v}`,
     write: v => ANIMATION_KEYS.map(k => `settings put global ${k} ${v}`),
   },
+  {
+    // preset: viene puesto y no se puede dejar en «No tocar». run: en vez de write, lo hace adb.js. only: solo en esos Android
+    key: 'adbGuard', name: 'Recuperar la depuración', options: YES_NO, preset: '1',
+    only: adb.GUARD_SDK, onlyText: 'Solo hace falta en Android 7',
+    hint: 'Solo en Android 7, que puede quedarse «offline» tras un corte de red hasta que alguien apaga y enciende la depuración USB. '
+      + 'Con «Sí», el panel deja en el móvil un pequeño script que lo hace solo, sin instalar nada. Se arranca al conectar.',
+    read: s => s.guard,
+    run: (serial, v) => adb.setGuard(serial, v === '1'),
+  },
 ];
 
 const byKey = new Map(SETTINGS.map(s => [s.key, s]));
+const PRESETS = Object.fromEntries(SETTINGS.filter(s => s.preset).map(s => [s.key, s.preset]));
 const valid = (key, value) => byKey.get(key)?.options.some(([v]) => v === value);
 const text = (s, v) => s.options.find(([o]) => o === v)?.[1] ?? (s.other ? s.other(v) : v);
 
 // Lo que necesita la página: nombre, explicación, opciones y desde qué Android existe
-const definitions = () => SETTINGS.map(({ key, name, hint, minSdk, options }) => ({ key, name, hint, options, android: ANDROID[minSdk] }));
+const definitions = () => SETTINGS.map(({ key, name, hint, minSdk, options, preset }) => ({ key, name, hint, options, android: ANDROID[minSdk], fixed: Boolean(preset) }));
 
 // settings.json: el perfil común ({ ajuste: valor }) y, en «moviles», lo que algún móvil tiene distinto
 // ({ número de serie: { ajuste: valor, o "" si en ese móvil no se toca } })
@@ -94,7 +104,7 @@ function data() {
 }
 
 function profile() {
-  return Object.fromEntries(Object.entries(data()).filter(([k, v]) => valid(k, v)));
+  return { ...PRESETS, ...Object.fromEntries(Object.entries(data()).filter(([k, v]) => valid(k, v))) };
 }
 
 function exceptions() {
@@ -139,6 +149,7 @@ async function read(serial) {
   const s = await adb.readSettings(serial);
   return Object.fromEntries(SETTINGS.map(def => {
     if (s.sdk < (def.minSdk || 0)) return [def.key, { na: `Necesita Android ${ANDROID[def.minSdk]}` }];
+    if (def.only && !def.only.includes(s.sdk)) return [def.key, { na: def.onlyText }];
     const value = def.read(s);
     return [def.key, value == null ? {} : { value, text: text(def, value) }];
   }));
@@ -150,10 +161,27 @@ async function apply(serial, key, serialno) {
   const differs = values => SETTINGS.filter(d => (!key || d.key === key) && want[d.key] && !values[d.key].na && values[d.key].value !== want[d.key]);
   const todo = differs(await read(serial));
   if (!todo.length) return 'Ya estaba así';
-  await adb.writeSettings(serial, todo.flatMap(d => d.write(want[d.key])));
+  const commands = todo.filter(d => d.write).flatMap(d => d.write(want[d.key]));
+  if (commands.length) await adb.writeSettings(serial, commands);
+  for (const d of todo.filter(d => d.run)) await d.run(serial, want[d.key]);
   const refused = differs(await read(serial));
   if (refused.length) throw new Error(`El móvil no ha aceptado: ${refused.map(d => d.name.toLowerCase()).join(', ')}`);
   return todo.length === 1 ? `${todo[0].name}: ${text(todo[0], want[todo[0].key])}` : `${todo.length} ajustes cambiados`;
 }
 
-module.exports = { definitions, profile, exceptions, setProfile, setException, read, apply };
+// Al conectar y cada minuto, porque el vigilante se pierde si el móvil se reinicia: que esté en marcha en los que deben tenerlo.
+// known: lo que ya se sabe de cada conexión de adb, para no preguntarlo cada vez
+const known = new Map();
+async function keepGuards() {
+  const online = await adb.online();
+  for (const serial of known.keys()) if (!online.includes(serial)) known.delete(serial);
+  await Promise.all(online.map(async serial => {
+    try {
+      if (!known.has(serial)) known.set(serial, { sdk: await adb.sdkOf(serial), serialno: await adb.serialno(serial) });
+      const { sdk, serialno } = known.get(serial);
+      if (adb.GUARD_SDK.includes(sdk) && target(serialno).adbGuard === '1') await adb.setGuard(serial, true);
+    } catch {}
+  }));
+}
+
+module.exports = { definitions, profile, exceptions, setProfile, setException, read, apply, keepGuards };

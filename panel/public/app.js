@@ -1405,9 +1405,10 @@ async function startCal(id, previous, cancelled) {
 }
 
 // Mide un altavoz: cada barrido, cuánto después de su hora llega (ms); cuando cuatro seguidos coinciden (±3 ms) da la
-// mediana. El modo ligero (Android 4) tarda más en cuadrarse tras arrancar, así que se le espera más
-async function measureRoom(rec, tpl, { startAt, delay, light }, cancelled, progress) {
-  const limit = pcNow() + (light ? 45000 : 15000);
+// mediana. Mientras el altavoz se cuadra tras arrancar, cada barrido llega un poco más allá y no coinciden; algunos móviles
+// y el modo ligero (Android 4) tardan bastante, así que se espera hasta 45 s, aunque lo normal es acabar en unos 10 s
+async function measureRoom(rec, tpl, { startAt, delay }, cancelled, progress) {
+  const limit = pcNow() + 45000;
   const toIndex = ms => Math.round((ms - rec.diff()) * rec.rate / 1000 - rec.first);
   let s = Math.max(1, Math.ceil((pcNow() + 1500 - startAt - delay) / 1000)); // el anterior ya callado y este sonando
   let last = null;
@@ -1534,8 +1535,10 @@ async function measure(cal, targets) {
       cal.startAt = await startCal(d.serialno, cal.startAt, () => cal.cancelled);
       if (cal.cancelled) return;
       note.textContent = `Escuchando ${title(d)}…`;
-      const r = await measureRoom(cal.rec, cal.tpl, { startAt: cal.startAt, delay: room.delay || 0, light: room.light }, () => cal.cancelled, found => {
+      let heard = false;
+      const r = await measureRoom(cal.rec, cal.tpl, { startAt: cal.startAt, delay: room.delay || 0 }, () => cal.cancelled, found => {
         const ok = found.filter(Boolean);
+        heard = ok.length > 0;
         row.textContent = ok.length ? `Oído ${ok.length} ${ok.length === 1 ? 'vez' : 'veces'}: ${ms(ok[ok.length - 1].err)}`
           : `Escuchando… (sin oírlo ${found.length} ${found.length === 1 ? 'vez' : 'veces'})`;
       });
@@ -1545,7 +1548,8 @@ async function measure(cal, targets) {
         cal.failed.delete(d.serialno);
       } else {
         cal.failed.add(d.serialno);
-        row.textContent = 'No se oye bien: acércate o súbele el volumen, y mídelo otra vez';
+        row.textContent = heard ? 'Se oye, pero sus medidas no llegan a coincidir: mídelo otra vez'
+          : 'No se oye bien: acércate o súbele el volumen, y mídelo otra vez';
         row.className = 'cal-state bad';
       }
     }
@@ -1812,7 +1816,7 @@ function renderSettings() {
     const help = [s.android && `Necesita Android ${s.android} o superior.`, s.hint].filter(Boolean).join(' ');
     return `<label class="pick" data-key="${esc(s.key)}"><span class="pick-name">${esc(s.name)}${help ? info(help) : ''}</span>
       <select class="want" aria-label="${esc(s.name)} para todos">
-        <option value="">No tocar</option>
+        ${s.fixed ? '' : '<option value="">No tocar</option>'}
         ${s.options.map(([v, text]) => `<option value="${esc(v)}" ${profile[s.key] === v ? 'selected' : ''}>${esc(text)}</option>`).join('')}
       </select></label>`;
   }).join('');
@@ -1871,7 +1875,7 @@ async function settingChoice(btn) {
     <p class="muted">Elige qué quieres en ${esc(title(d))}; se cambia ya.</p>`;
   const choice = await choose(`${s.name} en ${title(d)}`, html, [
     ...s.options.map(([v, text]) => [`v:${v}`, text, v === want ? 'primary' : '']),
-    ...(common && mine !== '' ? [['skip', 'No tocar aquí']] : []),
+    ...(common && mine !== '' && !s.fixed ? [['skip', 'No tocar aquí']] : []),
     ...(mine !== undefined ? [['profile', 'Como el perfil']] : []),
   ]);
   if (!choice) return;

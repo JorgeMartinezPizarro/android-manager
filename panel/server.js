@@ -86,6 +86,7 @@ async function keepConnected() {
     const back = (await Promise.all(missing.map(ip => settle(adb.connect(ip), { ip })))).filter(r => r.ok);
     for (const r of back) console.log(`  ${r.ip}: reconectado`);
     if (back.length) music.keepPorts();
+    await settings.keepGuards();
   } catch {} finally { reconnecting = false; }
 }
 
@@ -541,6 +542,7 @@ server.listen(PORT, '127.0.0.1', async () => {
     console.log(`  ${r.ip}: ${r.message}`);
   }
   music.keepPorts();
+  settings.keepGuards().catch(() => {});
   setInterval(keepConnected, 60000);
   autoSync();
 });
