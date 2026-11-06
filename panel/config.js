@@ -32,9 +32,9 @@ function parse(line) {
 
 const readList = name => readLines(name).map(parse).filter(e => e.value);
 
-// Quita las líneas cuyo valor cumpla «drop» y, si se pasa, añade «line» al final; el resto queda igual
+// Quita las líneas cuyo valor (y comentario) cumpla «drop» y, si se pasa, añade «line» al final; el resto queda igual
 function edit(name, drop, line) {
-  const lines = readLines(name).filter(l => !drop(parse(l).value));
+  const lines = readLines(name).filter(l => { const e = parse(l); return !drop(e.value, e.note); });
   while (lines.length && lines.at(-1) === '') lines.pop();
   if (line) lines.push(line);
   fs.writeFileSync(file(name), lines.join('\n') + '\n');
@@ -61,14 +61,26 @@ function setName(id, name) {
   edit('names.txt', v => v.split(/\s+/)[0] === id, name && `${id}  ${name}`);
 }
 
-// devices.txt: IPs a las que reconectar por wifi. droids.sh les pone siempre :5555,
-// así que solo se guardan las conexiones a ese puerto
-const savedIps = () => readList('devices.txt').map(e => e.value);
+// devices.txt: IPs a las que reconectar por wifi. droids.sh les pone siempre :5555, así que solo se guardan las conexiones
+// a ese puerto. En el comentario, «serie X»: el número de serie del móvil, por el que se le reconoce si el router le cambia la IP
+const savedPhones = () => readList('devices.txt').map(e => ({ ip: e.value, note: e.note, serialno: e.note.match(/\bserie (\S+)/)?.[1] || '' }));
+const savedIps = () => [...new Set(savedPhones().map(p => p.ip))];
 
 function saveIp(host) {
   const [ip, port = '5555'] = host.split(':');
   if (port !== '5555' || savedIps().includes(ip)) return;
   edit('devices.txt', () => false, ip);
+}
+
+// Apunta que ese móvil está en esa IP: cambia su línea o, si no tiene, la de esa IP que no sea de nadie. Si la IP es de la línea
+// de otro móvil (el router las reparte de nuevo), esa se queda: ese móvil sigue faltando y hay que buscarlo
+function placePhone(ip, serialno) {
+  const phones = savedPhones();
+  const old = phones.find(p => p.serialno === serialno) || phones.find(p => p.ip === ip && !p.serialno);
+  if (old?.ip === ip && old.serialno === serialno) return;
+  if (!old && !phones.some(p => p.ip === ip)) return; // ni la IP ni el móvil están guardados
+  const note = old?.serialno ? old.note : [old?.note, `serie ${serialno}`].filter(Boolean).join(' · ');
+  edit('devices.txt', (value, n) => old && value === old.ip && n === old.note, `${ip}  # ${note}`);
 }
 
 // debloat/<fabricante>.txt: apps del sistema que se quitan en bloque
@@ -78,4 +90,4 @@ function debloatLists() {
   return Object.fromEntries(files.map(f => [path.basename(f, '.txt').toLowerCase(), readList(path.join('debloat', f))]));
 }
 
-module.exports = { dataPath: file, readKeep, writeKeep, names, setName, savedIps, saveIp, debloatLists };
+module.exports = { dataPath: file, readKeep, writeKeep, names, setName, savedPhones, savedIps, saveIp, placePhone, debloatLists };

@@ -377,6 +377,16 @@ const lanServers = new Map(); // IP del PC → promesa de su servidor escuchando
 const allowed = new Set(); // IP de los móviles que llegan por la wifi
 const plain = address => String(address || '').replace(/^::ffff:/, '');
 
+// Si el router le cambia la IP a un móvil, su página sigue intentándolo desde la nueva: hay que dejarla pasar
+function followIp(room) {
+  const ip = room.lan && room.serial?.match(/^([\d.]+):\d+$/)?.[1];
+  if (!ip || ip === room.lan) return false;
+  allowed.delete(room.lan);
+  allowed.add(ip);
+  room.lan = ip;
+  return true;
+}
+
 // La IP del PC en la misma red que el móvil
 function pcAddress(phoneIp) {
   const int = ip => ip.split('.').reduce((n, b) => n * 256 + Number(b), 0);
@@ -488,6 +498,7 @@ async function followSerials() {
     const room = rooms[await adb.serialno(serial).catch(() => '')];
     if (!room || !lost(room)) continue;
     room.serial = serial;
+    followIp(room);
     saveRooms();
   }
 }
@@ -709,6 +720,7 @@ function start() {
   server.listen(PORT, '127.0.0.1');
   // Los altavoces por la wifi que ya había vuelven a encontrar al PC tras reiniciar el panel
   for (const room of Object.values(rooms)) {
+    if (followIp(room)) saveRooms();
     const address = room.lan && pcAddress(room.lan);
     if (!address) continue;
     allowed.add(room.lan);
@@ -718,4 +730,4 @@ function start() {
   setInterval(watchHeadless, 15000).unref();
 }
 
-module.exports = { PORT, start, keepPorts, status, control, setRoom, open, upload, openFolder, wav };
+module.exports = { PORT, start, keepPorts, pcAddress, status, control, setRoom, open, upload, openFolder, wav };

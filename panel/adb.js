@@ -580,13 +580,42 @@ async function touch(serial, { x, y, x2 = x, y2 = y }) {
   }
 }
 
-const portOpen = (host, port) => new Promise(done => {
-  const socket = net.connect({ host, port, timeout: 3000 });
+const portOpen = (host, port, timeout = 3000) => new Promise(done => {
+  const socket = net.connect({ host, port, timeout });
   const end = open => { socket.destroy(); done(open); };
   socket.once('connect', () => end(true));
   socket.once('error', () => end(false));
   socket.once('timeout', () => end(false));
 });
+
+// Las IP de una red de casa («192.168.1.») con el puerto de adb abierto. De pocas en pocas, para no llenar la wifi de preguntas.
+// La demo no sale a la red de verdad: sus móviles están en el estado del adb de mentira
+async function openAdbPorts(prefix) {
+  if (process.env.FAKE_ADB_STATE) {
+    return Object.values(JSON.parse(fs.readFileSync(process.env.FAKE_ADB_STATE, 'utf8')).phones).map(p => p.ip).filter(ip => ip.startsWith(prefix));
+  }
+  const open = [];
+  for (let i = 1; i < 255; i += 32) {
+    const batch = Array.from({ length: Math.min(32, 255 - i) }, (_, k) => `${prefix}${i + k}`);
+    const answers = await Promise.all(batch.map(ip => portOpen(ip, 5555, 2000)));
+    open.push(...batch.filter((_, k) => answers[k]));
+  }
+  return open;
+}
+
+// Se conecta a lo que haya en esa IP y da su número de serie; vacío si no acepta a este PC, null si no llega a contestar.
+// Lo deja conectado: quien pregunta decide si se queda
+async function identify(ip) {
+  const serial = `${ip}:5555`;
+  try { await connect(ip); } catch { return null; }
+  for (let i = 0; i < 8; i++) {
+    const state = (await run(['devices'])).split('\n').map(line => line.trim().split(/\s+/)).find(([s]) => s === serial)?.[1];
+    if (state === 'device') return serialno(serial).catch(() => null);
+    if (state === 'unauthorized') return '';
+    await sleep(750);
+  }
+  return null;
+}
 
 async function connect(host) {
   const target = host.includes(':') ? host : `${host}:5555`;
@@ -695,5 +724,5 @@ async function enableWifi(serial) {
 
 module.exports = {
   PKG, adbPath, sdkOf, startServer, serials, online, serialno, devices, GUARD_SDK, setGuard, apps, appAction, versions, install, openStore, pullApk, awake,
-  readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, touch, reverse, wifiIp, openSpeaker, closeOldSpeakerTabs, tapScreen, connect, disconnect, reconnect, pair, pairQr, enableWifi,
+  readSettings, writeSettings, brightness, darkest, setBrightness, quick, musicVolume, setMusicVolume, screenshot, touch, reverse, wifiIp, openSpeaker, closeOldSpeakerTabs, tapScreen, connect, disconnect, reconnect, openAdbPorts, identify, pair, pairQr, enableWifi,
 };

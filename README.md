@@ -56,8 +56,10 @@ No toca tus ficheros.
    - **Con cable USB**: activa «Depuración USB», enchúfalo y acepta «¿Permitir depuración USB?» marcando
      «Permitir siempre». En el panel, «Pasar a Wi-Fi» y ya puedes quitar el cable. La IP se guarda en
      `datos/devices.txt` y el panel la reconecta al arrancar y, si se cae (por ejemplo, porque adb se ha reiniciado), al cabo
-     de un minuto. Si lo quitas con «Desconectar», no vuelve hasta que pulses «Reconectar». Este modo se pierde si el
-     móvil se reinicia. Un corte de red no lo quita: si tras un corte un móvil sale «offline» con el puerto abierto, basta
+     de un minuto. Si el router le cambia la IP, por ejemplo al reiniciarse, el panel lo busca por la red y lo reconoce por
+     su número de serie, en unos minutos o al pulsar «Reconectar». Mientras busca, a otro móvil o tele Android de casa con
+     ese modo activo le puede salir una vez el aviso de permitir la depuración: recházalo. Si lo quitas con «Desconectar»,
+     no vuelve hasta que pulses «Reconectar». Este modo se pierde si el móvil se reinicia. Un corte de red no lo quita: si tras un corte un móvil sale «offline» con el puerto abierto, basta
      con apagar y encender su «Depuración USB», sin cable. En Android 7, donde pasa, el panel lo hace solo en unos minutos
      (mira **Ajustes**).
 
@@ -245,7 +247,7 @@ cerrado. Las versiones anteriores guardaban estos ficheros junto al proyecto; el
 | `musica/` | Las canciones para la pestaña Música. |
 | `music.json` | Los móviles que hacen de altavoz (si suenan y su retraso), si las canciones van en aleatorio y el brillo que tenía cada móvil antes de bajárselo. Lo escribe el panel: no lo borres con los móviles en reposo, o se quedarán con el brillo al mínimo. |
 | `keep.txt` | Lo regenera el panel desde `apps.json` para que `droids.sh prune` sepa qué conservar. La primera vez se guarda tu versión en `keep.txt.bak`. |
-| `devices.txt` | IPs a las que reconectar por wifi (puerto 5555). |
+| `devices.txt` | IPs a las que reconectar por wifi (puerto 5555) y, en el comentario, el número de serie de cada móvil. Si le cambia la IP, el panel la corrige. |
 | `names.txt` | Nombre de cada móvil, por su número de serie. Lo escribe el panel. |
 | `debloat/<fabricante>.txt` | De versiones anteriores: la primera vez, sus apps pasan a «Marcada por ti» en Limpiar. `droids.sh debloat` las sigue usando. |
 

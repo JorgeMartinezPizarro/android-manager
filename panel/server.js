@@ -70,7 +70,14 @@ on('POST', '/api/connect', async ({ body: { host } }) => {
 
 on('POST', '/api/connect-saved', async () => {
   dropped.clear();
-  return { results: await Promise.all(cfg.savedIps().map(ip => settle(adb.connect(ip), { ip }))) };
+  strangers.clear();
+  const results = await Promise.all(cfg.savedIps().map(ip => settle(adb.connect(ip), { ip })));
+  if (results.some(r => !r.ok)) {
+    for (const found of await trackPhones(true).catch(() => [])) {
+      Object.assign(results.find(r => r.ip === found.was) || {}, { ok: true, message: `Su IP ha cambiado: ahora es ${found.ip}` });
+    }
+  }
+  return { results };
 });
 
 // adb olvida los móviles conectados por IP cuando se reinicia (por ejemplo, si el PC se queda sin memoria): cada minuto
@@ -85,9 +92,64 @@ async function keepConnected() {
     const missing = cfg.savedIps().filter(ip => !dropped.has(ip) && !attached.some(s => s.startsWith(`${ip}:`)));
     const back = (await Promise.all(missing.map(ip => settle(adb.connect(ip), { ip })))).filter(r => r.ok);
     for (const r of back) console.log(`  ${r.ip}: reconectado`);
-    if (back.length) music.keepPorts();
+    const found = await trackPhones().catch(() => []);
+    if (back.length || found.length) music.keepPorts();
     await settings.keepGuards();
   } catch {} finally { reconnecting = false; }
+}
+
+// Al reiniciarse, el router puede repartir otras IP, y en la guardada ya no contesta nadie. Por eso cada IP guardada apunta el
+// número de serie de su móvil, y al que falta se le busca por la red: se conecta a lo que tenga abierto el puerto de adb y se mira
+// quién es. Lo demás se desconecta y no se vuelve a probar en un día, porque a un móvil que no conoce a este PC le sale el aviso de
+// permitir la depuración. Cada búsqueda son 254 preguntas a la wifi: cuanto más tarda en aparecer, más se espaciamos
+const SEARCH_FIRST = 60000, SEARCH_MOST = 30 * 60000, STRANGER = 24 * 3600000;
+const strangers = new Map(); // IP → hasta cuándo dejarla en paz
+let searchWait = SEARCH_FIRST, searchAt = 0, tracking = null;
+const trackPhones = now => (tracking ||= findPhones(now).finally(() => { tracking = null; }));
+
+async function findPhones(now = false) {
+  const online = await adb.online();
+  const here = await Promise.all(online.map(async serial => ({ serial, serialno: await adb.serialno(serial).catch(() => '') })));
+  const known = cfg.savedPhones();
+  for (const { serial, serialno } of here) {
+    if (!serialno || !serial.endsWith(':5555')) continue;
+    // Hay móviles baratos que comparten número de serie: si «el mismo» sigue también en su IP, no es que se haya movido
+    const twin = known.some(p => p.serialno === serialno && `${p.ip}:5555` !== serial
+      && here.some(h => h.serial === `${p.ip}:5555` && h.serialno === serialno));
+    if (!twin) cfg.placePhone(serial.slice(0, -5), serialno);
+  }
+
+  const attached = await adb.serials();
+  const lost = cfg.savedPhones().filter(p => p.serialno && !dropped.has(p.ip) && !here.some(h => h.serialno === p.serialno)
+    && (!attached.includes(`${p.ip}:5555`) || online.includes(`${p.ip}:5555`))); // conectado pero sin responder: está ahí, atascado
+  if (!lost.length) {
+    searchWait = SEARCH_FIRST;
+    searchAt = 0;
+    return [];
+  }
+  const nets = [...new Set(lost.map(p => p.ip.replace(/\d+$/, '')))].filter(prefix => music.pcAddress(`${prefix}1`));
+  if (!nets.length || (!now && Date.now() < searchAt)) return [];
+
+  const found = [];
+  for (const prefix of nets) {
+    for (const ip of await adb.openAdbPorts(prefix)) {
+      if (found.length === lost.length) break;
+      if (attached.includes(`${ip}:5555`) || strangers.get(ip) > Date.now()) continue;
+      const serialno = await adb.identify(ip);
+      const phone = lost.find(p => p.serialno === serialno);
+      if (phone) {
+        cfg.placePhone(ip, serialno);
+        console.log(`  ${phone.ip}: su IP ha cambiado, ahora es ${ip}`);
+        found.push({ was: phone.ip, ip });
+        continue;
+      }
+      await adb.disconnect(`${ip}:5555`).catch(() => {});
+      if (serialno !== null) strangers.set(ip, Date.now() + STRANGER);
+    }
+  }
+  searchWait = found.length ? SEARCH_FIRST : Math.min(searchWait * 2, SEARCH_MOST);
+  searchAt = Date.now() + searchWait;
+  return found;
 }
 
 on('POST', '/api/pair', async ({ body: { host, code } }) => {
