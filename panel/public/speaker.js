@@ -9,6 +9,9 @@
   const ID = params.get('id') || '';
   const SILENT = params.has('silencio');
   const JUMP = 0.03; // s de desfase con el PC a partir de los que se recoloca la canción de golpe; por debajo, sin saltos
+  // Con la página oculta (pantalla apagada), Android le deja a Chrome muy poco procesador y las lecturas del reloj del audio
+  // bailan: con ese margen se recolocaba cada pocos segundos por nada, y cada vez se oye. Ahí, solo a partir de esto
+  const HIDDEN_JUMP = 0.25;
   const HORIZON = 10; // s en los que se quiere absorber un desfase pequeño, acelerando o frenando
   const LEARN = 400; // s²: lo despacio que aprende cuánto adelanta o atrasa de por sí el reloj del audio de este móvil
   const MAX_RATE = 0.005; // como mucho un 0,5 % más rápido o más lento: el tono no cambia de forma que se note
@@ -185,11 +188,12 @@
     if (LIGHT) return scheduleLight(target);
     const zero = ctxTime(target), now = ctx.currentTime; // zero: instante del audio en que debería haber empezado
     if (current && current.song === state.song) {
-      if (current.target !== target) { current.target = target; current.errors = []; } // las medidas de antes ya no valen
+      const moved = current.target !== target; // se ha saltado en la canción o ha cambiado el retraso: se recoloca sin esperar
+      if (moved) { current.target = target; current.errors = []; } // las medidas de antes ya no valen
       current.errors.push({ t: now, e: posAt(current, now) - (now - zero) });
       current.errors = current.errors.filter(x => now - x.t < 10);
       offBy = median(current.errors.map(x => x.e));
-      if (Math.abs(offBy) < JUMP) return steer(current, now);
+      if (Math.abs(offBy) < (document.hidden && !moved ? HIDDEN_JUMP : JUMP)) return steer(current, now);
       fixes++;
     }
     const rate = 1 + drift;

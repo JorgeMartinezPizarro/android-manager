@@ -134,7 +134,7 @@ Consejo: reserva en el router una IP fija para cada móvil.
   tarda distinto en obedecer (de 0,2 a 3 s): todos ajustan su reloj con el del PC y el PC les dice a qué hora exacta
   empieza la canción. Mientras suena, cada uno mide cada pocos segundos cuánto se ha ido de donde debería estar y lo corrige
   solo, acelerando o frenando un poco (como mucho un 0,5 %, que no se nota en el tono); solo si se va más de 30 ms se recoloca
-  de golpe. En el panel, junto a «Sonando», sale su desfase en ese momento (**+n ms** si va adelantado, **−n ms** si va retrasado).
+  de golpe (con la pantalla apagada, más de 250 ms: ahí su reloj se lee con mucho ruido y cada recolocación se oye). En el panel, junto a «Sonando», sale su desfase en ese momento (**+n ms** si va adelantado, **−n ms** si va retrasado).
   - Las canciones son las de la carpeta `datos/musica/` (y sus subcarpetas): súbelas desde el panel o cópialas ahí.
     Valen mp3, m4a, aac, ogg, opus, wav y flac. Al acabar una suena la siguiente, y tras la última, otra vez la primera.
     Se eligen con **Canciones**, que las muestra a pantalla completa con un buscador (sin tildes ni mayúsculas; Enter
